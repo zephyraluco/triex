@@ -85,6 +85,24 @@
     padding: 0;
     font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
   }
+
+  /* Use overflow: clip on the launcher root so programmatic scrollIntoView calls
+     (e.g. inside cmdk) can NEVER scroll or drift the outer viewport during window resizes. */
+  html:has(body.launcher-body),
+  body.launcher-body,
+  body.launcher-body #root {
+    height: 100%;
+    overflow: clip;
+    background-color: transparent;
+  }
+
+  html:has(body.launcher-body) {
+    background-color: rgb(255 255 255 / 0.72);
+  }
+
+  html.dark:has(body.launcher-body) {
+    background-color: rgb(24 24 27 / 0.78);
+  }
 }
 
 /* Subtle custom scrollbar for launcher result list */

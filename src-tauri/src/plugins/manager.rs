@@ -9,8 +9,8 @@ use crate::platform::window::set_logical_height;
 use crate::state::AppState;
 
 const PLUGIN_BRIDGE_JS: &str = include_str!("../../resources/plugin-bridge.js");
-const LAUNCHER_WIDTH: f64 = 680.0;
-const HEADER_HEIGHT: f64 = 60.0;
+const LAUNCHER_WIDTH: f64 = 800.0;
+const HEADER_HEIGHT: f64 = 64.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

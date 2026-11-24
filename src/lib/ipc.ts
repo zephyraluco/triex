@@ -40,6 +40,7 @@ export interface AppSettings {
   hideOnBlur: boolean;
   customScanDirs: string[];
   excludedApps: string[];
+  pinnedItems: string[];
 }
 
 export interface PluginFeature {
@@ -95,12 +96,36 @@ export const ipc = {
     return invoke("open_item_folder", { itemId });
   },
 
+  togglePinItem(itemId: string): Promise<string[]> {
+    return invoke("toggle_pin_item", { itemId });
+  },
+
+  removeRecentItem(itemId: string): Promise<void> {
+    return invoke("remove_recent_item", { itemId });
+  },
+
+  showItemContextMenu(itemId: string): Promise<void> {
+    return invoke("show_item_context_menu", { itemId });
+  },
+
+  showBrandContextMenu(): Promise<void> {
+    return invoke("show_brand_context_menu");
+  },
+
+  setSettingsViewOpen(open: boolean): Promise<void> {
+    return invoke("set_settings_view_open", { open });
+  },
+
   resizeWindow(height: number): Promise<void> {
     return invoke("resize_window", { height });
   },
 
   hideWindow(): Promise<void> {
     return invoke("hide_window");
+  },
+
+  completeHide(epoch: number): Promise<void> {
+    return invoke("complete_hide", { epoch });
   },
 
   getClipboardSnapshot(): Promise<ClipboardSnapshot | null> {

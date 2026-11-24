@@ -105,6 +105,16 @@ impl Database {
         })
     }
 
+    pub fn remove_item_usage(&self, item_id: &str) -> AppResult<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM usage_history WHERE item_id = ?1",
+                params![item_id],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn load_all_usage(&self) -> AppResult<HashMap<String, UsageRecord>> {
         self.with_conn(|conn| {
             let mut stmt =

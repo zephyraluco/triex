@@ -28,13 +28,14 @@ pub fn search_items(
     limit: Option<usize>,
     state: State<'_, AppState>,
 ) -> AppResult<SearchResponse> {
-    let max_results = limit.unwrap_or_else(|| state.current_settings().max_results);
+    let settings = state.current_settings();
+    let max_results = limit.unwrap_or(settings.max_results);
     let mut engine = state
         .search
         .lock()
         .map_err(|_| AppError::Platform("Search engine mutex poisoned".to_string()))?;
 
-    let items = engine.search(&query, max_results);
+    let items = engine.search(&query, max_results, &settings.pinned_items);
     let total_indexed = engine.len();
 
     Ok(SearchResponse {

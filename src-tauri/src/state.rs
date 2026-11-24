@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 
 use notify::RecommendedWatcher;
@@ -8,6 +9,20 @@ use crate::plugins::manager::ActivePluginSession;
 use crate::search::SearchEngine;
 use crate::storage::Database;
 
+/// Action bound to a native popup context menu item.
+#[derive(Debug, Clone)]
+pub enum ContextMenuAction {
+    Launch { item_id: String, as_admin: bool },
+    TogglePin { item_id: String },
+    RemoveRecent { item_id: String },
+    OpenFolder { item_id: String },
+    CopyPath { text: String },
+    ToggleDashboard,
+    RebuildIndex,
+    OpenSettings,
+    QuitApp,
+}
+
 /// Shared backend state registered via `tauri::Builder::manage`.
 pub struct AppState {
     pub paths: AppPaths,
@@ -15,6 +30,11 @@ pub struct AppState {
     pub search: Mutex<SearchEngine>,
     pub settings: RwLock<AppSettings>,
     pub prev_foreground_hwnd: AtomicIsize,
+    pub is_shown: AtomicBool,
+    pub visibility_epoch: AtomicU64,
+    pub in_settings_view: AtomicBool,
+    pub context_menu_open: AtomicBool,
+    pub context_menu_actions: Mutex<HashMap<String, ContextMenuAction>>,
     pub active_plugin: Mutex<Option<ActivePluginSession>>,
     pub dir_watcher: Mutex<Option<RecommendedWatcher>>,
 }
@@ -27,6 +47,11 @@ impl AppState {
             search: Mutex::new(SearchEngine::new()),
             settings: RwLock::new(settings),
             prev_foreground_hwnd: AtomicIsize::new(0),
+            is_shown: AtomicBool::new(true),
+            visibility_epoch: AtomicU64::new(0),
+            in_settings_view: AtomicBool::new(false),
+            context_menu_open: AtomicBool::new(false),
+            context_menu_actions: Mutex::new(HashMap::new()),
             active_plugin: Mutex::new(None),
             dir_watcher: Mutex::new(None),
         }

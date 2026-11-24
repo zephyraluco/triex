@@ -9,11 +9,15 @@ pub mod state;
 pub mod storage;
 pub mod tray;
 
+use std::sync::atomic::Ordering;
+
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tracing_subscriber::EnvFilter;
 
-use crate::commands::launcher::{hide_main_launcher, show_main_launcher};
+use crate::commands::launcher::{
+    handle_context_menu_event, hide_main_launcher, show_main_launcher,
+};
 use crate::commands::search::trigger_rebuild_index;
 use crate::commands::settings::register_launcher_hotkey;
 use crate::config::AppPaths;
@@ -76,6 +80,14 @@ pub fn run() {
                 apply_window_vibrancy(&main_win, settings.vibrancy, settings.theme);
                 position_on_cursor_monitor(&main_win);
 
+                let menu_handle = app.handle().clone();
+                main_win.on_menu_event(move |_window, event| {
+                    let id = event.id().as_ref();
+                    if id.starts_with("ctx:") {
+                        handle_context_menu_event(&menu_handle, id);
+                    }
+                });
+
                 let handle = app.handle().clone();
                 main_win.on_window_event(move |event| {
                     if let WindowEvent::Focused(false) = event {
@@ -85,8 +97,14 @@ pub fn run() {
                             .lock()
                             .map(|g| g.is_some())
                             .unwrap_or(false);
-                        // Avoid closing when focus moves from main header webview into its child plugin webview.
-                        if st.current_settings().hide_on_blur && !has_active_plugin {
+                        let menu_open = st.context_menu_open.load(Ordering::SeqCst);
+                        let in_settings = st.in_settings_view.load(Ordering::SeqCst);
+                        // Avoid closing when focus moves into a child plugin webview, native popup menu, or embedded settings.
+                        if st.current_settings().hide_on_blur
+                            && !has_active_plugin
+                            && !menu_open
+                            && !in_settings
+                        {
                             hide_main_launcher(&handle, false);
                         }
                     }
@@ -129,8 +147,14 @@ pub fn run() {
             commands::search::rebuild_index,
             commands::launcher::launch_item,
             commands::launcher::open_item_folder,
+            commands::launcher::toggle_pin_item,
+            commands::launcher::remove_recent_item,
+            commands::launcher::show_item_context_menu,
+            commands::launcher::show_brand_context_menu,
+            commands::launcher::set_settings_view_open,
             commands::launcher::resize_window,
             commands::launcher::hide_window,
+            commands::launcher::complete_hide,
             commands::clipboard::get_clipboard_snapshot,
             commands::clipboard::paste_to_previous_window,
             commands::plugin::list_plugins,

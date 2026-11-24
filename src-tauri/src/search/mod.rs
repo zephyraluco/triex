@@ -99,16 +99,24 @@ impl SearchEngine {
     }
 
     /// Searches indexed items and returns at most `limit` top-ranked hits.
-    /// When `query` is blank, returns top recently/frequently used items.
-    pub fn search(&mut self, query: &str, limit: usize) -> Vec<SearchResultItem> {
+    /// When `query` is blank, returns pinned items first, then frequently/recently used items.
+    pub fn search(
+        &mut self,
+        query: &str,
+        limit: usize,
+        pinned_ids: &[String],
+    ) -> Vec<SearchResultItem> {
         let trimmed = query.trim();
-        let cap = limit.clamp(1, 100);
+        let cap = limit.clamp(1, 500);
 
         if trimmed.is_empty() {
             let mut defaults: Vec<&IndexedItem> = self.items.iter().collect();
             defaults.sort_by(|a, b| {
-                b.frecency
-                    .total_cmp(&a.frecency)
+                let a_pinned = pinned_ids.iter().any(|id| id == &a.raw.id);
+                let b_pinned = pinned_ids.iter().any(|id| id == &b.raw.id);
+                b_pinned
+                    .cmp(&a_pinned)
+                    .then_with(|| b.frecency.total_cmp(&a.frecency))
                     .then_with(|| a.name_lower.cmp(&b.name_lower))
             });
             return defaults
@@ -207,7 +215,7 @@ mod tests {
         let mut engine = SearchEngine::new();
         engine.rebuild(sample_items(), &HashMap::new(), &[]);
 
-        let hits = engine.search("wx", 10);
+        let hits = engine.search("wx", 10, &[]);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "app:wechat");
         assert_eq!(hits[0].match_indices, vec![0, 1]);
@@ -218,7 +226,7 @@ mod tests {
         let mut engine = SearchEngine::new();
         engine.rebuild(sample_items(), &HashMap::new(), &[]);
 
-        let hits = engine.search("jisuanqi", 10);
+        let hits = engine.search("jisuanqi", 10, &[]);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "app:calc");
         assert_eq!(hits[0].match_indices, vec![0, 1, 2]);
@@ -229,7 +237,7 @@ mod tests {
         let mut engine = SearchEngine::new();
         engine.rebuild(sample_items(), &HashMap::new(), &[]);
 
-        let hits = engine.search("vsc", 10);
+        let hits = engine.search("vsc", 10, &[]);
         assert!(!hits.is_empty());
         assert_eq!(hits[0].id, "app:vscode");
     }
@@ -247,7 +255,7 @@ mod tests {
         );
         engine.rebuild(sample_items(), &usage, &[]);
 
-        let hits = engine.search("", 10);
+        let hits = engine.search("", 10, &[]);
         assert_eq!(hits[0].id, "app:calc");
     }
 }

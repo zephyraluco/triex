@@ -1,54 +1,309 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, type MouseEvent } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { CommandGroup, CommandList } from "@/components/ui/command";
 import { ResultItem } from "@/components/launcher/ResultItem";
-import { EmptyState } from "@/components/launcher/EmptyState";
 import { ipc, type SearchResultItem } from "@/lib/ipc";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
+/** Number of icon cards per row in the ZTools-style launcher grid. */
+const GRID_COLUMNS = 9;
+/** Default visible rows per section before showing that section's own expand toggle. */
+const COLLAPSED_ITEM_LIMIT = GRID_COLUMNS * 2;
+
+interface GridSection {
+  key: string;
+  heading: string;
+  allItems: SearchResultItem[];
+  visibleItems: SearchResultItem[];
+  canExpand: boolean;
+  isExpanded: boolean;
+}
+
+interface GridCoord {
+  item: SearchResultItem;
+  row: number;
+  col: number;
+}
+
 export function ResultList() {
+  const listRef = useRef<HTMLDivElement>(null);
   const results = useLauncherStore((s) => s.results);
   const query = useLauncherStore((s) => s.query);
+  const selectedId = useLauncherStore((s) => s.selectedId);
+  const pinnedItems = useLauncherStore((s) => s.pinnedItems);
+  const showDashboard = useLauncherStore((s) => s.showDashboard);
+  const expandedSections = useLauncherStore((s) => s.expandedSections);
+  const toggleSectionExpanded = useLauncherStore((s) => s.toggleSectionExpanded);
+  const setSelectedId = useLauncherStore((s) => s.setSelectedId);
   const setStatusMessage = useLauncherStore((s) => s.setStatusMessage);
 
-  const handleSelect = async (item: SearchResultItem) => {
-    try {
-      await ipc.launchItem(item.id, false);
-    } catch (err) {
-      setStatusMessage(`启动失败: ${String(err)}`);
+  const handleSelect = useCallback(
+    async (item: SearchResultItem) => {
+      try {
+        await ipc.launchItem(item.id, false);
+      } catch (err) {
+        setStatusMessage(`启动失败: ${String(err)}`);
+        window.setTimeout(() => setStatusMessage(null), 2500);
+      }
+    },
+    [setStatusMessage],
+  );
+
+  const handleContextMenu = useCallback(
+    (item: SearchResultItem, event: MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setSelectedId(item.id);
+      void ipc.showItemContextMenu(item.id);
+    },
+    [setSelectedId],
+  );
+
+  const buildSection = useCallback(
+    (key: string, heading: string, items: SearchResultItem[]): GridSection => {
+      const canExpand = items.length > COLLAPSED_ITEM_LIMIT;
+      const isExpanded = Boolean(expandedSections[key]);
+      const visibleItems =
+        canExpand && !isExpanded ? items.slice(0, COLLAPSED_ITEM_LIMIT) : items;
+      return {
+        key,
+        heading,
+        allItems: items,
+        visibleItems,
+        canExpand,
+        isExpanded,
+      };
+    },
+    [expandedSections],
+  );
+
+  const hasQuery = query.trim().length > 0;
+
+  const sections = useMemo<GridSection[]>(() => {
+    if (hasQuery) {
+      return results.length > 0 ? [buildSection("best", "最佳匹配", results)] : [];
     }
-  };
 
-  const grouped = useMemo(() => {
-    // When searching, keep strict Rust relevance ranking in a single unified group
-    // so the highest-scored item is always first regardless of kind.
-    if (query.trim().length > 0) {
-      return [{ heading: "最佳匹配", items: results }];
+    const pinnedSet = new Set(pinnedItems);
+    const byId = new Map(results.map((r) => [r.id, r]));
+    const pinned = pinnedItems
+      .map((id) => byId.get(id))
+      .filter((item): item is SearchResultItem => item !== undefined);
+
+    // "最近使用" strictly contains items that have actual launch history (frecency > 0).
+    const recent = results.filter((r) => !pinnedSet.has(r.id) && r.score > 0);
+
+    const groups: GridSection[] = [];
+    if (pinned.length > 0) {
+      groups.push(buildSection("pinned", "已固定", pinned));
+    }
+    if (recent.length > 0) {
+      groups.push(buildSection("recent", "最近使用", recent));
     }
 
-    const apps = results.filter((r) => r.kind === "app" || r.kind === "uwpApp");
-    const commands = results.filter((r) => r.kind === "systemCmd");
-    const plugins = results.filter((r) => r.kind === "plugin");
+    // Pressing Ctrl+M opens full dashboard sections; each section expands/collapses independently.
+    if (showDashboard) {
+      const shownIds = new Set(groups.flatMap((g) => g.allItems.map((i) => i.id)));
+      const restApps = results.filter(
+        (r) => !shownIds.has(r.id) && (r.kind === "app" || r.kind === "uwpApp"),
+      );
+      const restPlugins = results.filter(
+        (r) => !shownIds.has(r.id) && r.kind === "plugin",
+      );
+      const restCommands = results.filter(
+        (r) => !shownIds.has(r.id) && r.kind === "systemCmd",
+      );
 
-    const sections: Array<{ heading: string; items: SearchResultItem[] }> = [];
-    if (apps.length) sections.push({ heading: "常用应用", items: apps });
-    if (plugins.length) sections.push({ heading: "插件", items: plugins });
-    if (commands.length) sections.push({ heading: "系统指令", items: commands });
-    return sections;
-  }, [query, results]);
+      if (restApps.length > 0) {
+        groups.push(buildSection("apps", "应用程序", restApps));
+      }
+      if (restPlugins.length > 0) {
+        groups.push(buildSection("plugins", "插件工具", restPlugins));
+      }
+      if (restCommands.length > 0) {
+        groups.push(buildSection("commands", "系统指令", restCommands));
+      }
+    }
+
+    return groups;
+  }, [hasQuery, results, pinnedItems, showDashboard, buildSection]);
+
+  const { flatCoords, rows } = useMemo(() => {
+    const coords: GridCoord[] = [];
+    const rowMatrix: GridCoord[][] = [];
+    let currentRow = 0;
+
+    for (const section of sections) {
+      const sectionRowCount = Math.ceil(section.visibleItems.length / GRID_COLUMNS);
+      for (let localIdx = 0; localIdx < section.visibleItems.length; localIdx++) {
+        const rowOffset = Math.floor(localIdx / GRID_COLUMNS);
+        const col = localIdx % GRID_COLUMNS;
+        const globalRow = currentRow + rowOffset;
+        const coord: GridCoord = {
+          item: section.visibleItems[localIdx],
+          row: globalRow,
+          col,
+        };
+        coords.push(coord);
+        if (!rowMatrix[globalRow]) {
+          rowMatrix[globalRow] = [];
+        }
+        rowMatrix[globalRow].push(coord);
+      }
+      currentRow += sectionRowCount;
+    }
+
+    return { flatCoords: coords, rows: rowMatrix };
+  }, [sections]);
+
+  // Keep selectedId aligned with currently visible items (e.g. when a section collapses or recent clears).
+  useEffect(() => {
+    if (flatCoords.length === 0) {
+      if (selectedId !== "") {
+        setSelectedId("");
+      }
+      return;
+    }
+    const exists = flatCoords.some((c) => c.item.id === selectedId);
+    if (!exists) {
+      setSelectedId(flatCoords[0].item.id);
+    }
+  }, [flatCoords, selectedId, setSelectedId]);
+
+  // Scroll ONLY within the inner CommandList container rather than calling element.scrollIntoView,
+  // which can drift outer ancestors during dynamic window resizing.
+  useEffect(() => {
+    if (!selectedId || !listRef.current) return;
+    const listEl = listRef.current;
+    const escaped = CSS.escape(selectedId);
+    const itemEl = listEl.querySelector(`[cmdk-item][data-value="${escaped}"]`);
+    if (!(itemEl instanceof HTMLElement)) return;
+
+    const listRect = listEl.getBoundingClientRect();
+    const itemRect = itemEl.getBoundingClientRect();
+    if (itemRect.top < listRect.top) {
+      listEl.scrollTop -= listRect.top - itemRect.top + 8;
+    } else if (itemRect.bottom > listRect.bottom) {
+      listEl.scrollTop += itemRect.bottom - listRect.bottom + 8;
+    }
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (flatCoords.length === 0) return;
+
+    const handleGridKeyDown = (event: KeyboardEvent) => {
+      const state = useLauncherStore.getState();
+      if (state.activePlugin || state.actionMenuOpen) return;
+
+      const idx = flatCoords.findIndex((c) => c.item.id === state.selectedId);
+      const currentIndex = idx === -1 ? 0 : idx;
+      const current = flatCoords[currentIndex];
+
+      if (event.key === "ArrowRight") {
+        const activeEl = document.activeElement;
+        if (
+          activeEl instanceof HTMLInputElement &&
+          activeEl.selectionStart !== null &&
+          activeEl.selectionStart < activeEl.value.length
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const next = (currentIndex + 1) % flatCoords.length;
+        setSelectedId(flatCoords[next].item.id);
+      } else if (event.key === "ArrowLeft") {
+        const activeEl = document.activeElement;
+        if (
+          activeEl instanceof HTMLInputElement &&
+          activeEl.selectionStart !== null &&
+          activeEl.selectionStart > 0
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const prev = (currentIndex - 1 + flatCoords.length) % flatCoords.length;
+        setSelectedId(flatCoords[prev].item.id);
+      } else if (event.key === "ArrowDown") {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetRow = rows[current.row + 1];
+        if (targetRow && targetRow.length > 0) {
+          const targetCol = Math.min(current.col, targetRow.length - 1);
+          setSelectedId(targetRow[targetCol].item.id);
+        }
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (current.row > 0) {
+          const targetRow = rows[current.row - 1];
+          if (targetRow && targetRow.length > 0) {
+            const targetCol = Math.min(current.col, targetRow.length - 1);
+            setSelectedId(targetRow[targetCol].item.id);
+          }
+        }
+      } else if (event.key === "Enter" && !event.altKey && !event.isComposing) {
+        event.preventDefault();
+        event.stopPropagation();
+        void handleSelect(current.item);
+      }
+    };
+
+    window.addEventListener("keydown", handleGridKeyDown, true);
+    return () => window.removeEventListener("keydown", handleGridKeyDown, true);
+  }, [flatCoords, rows, setSelectedId, handleSelect]);
+
+  // Collapse cleanly to the 64px search bar whenever there are no items to show
+  // (both on empty home with no history/pins and when a search query matches nothing).
+  if (sections.length === 0) {
+    return null;
+  }
 
   return (
-    <CommandList>
-      {results.length === 0 ? (
-        <EmptyState />
-      ) : (
-        grouped.map((section) => (
-          <CommandGroup key={section.heading} heading={section.heading}>
-            {section.items.map((item) => (
-              <ResultItem key={item.id} item={item} onSelect={handleSelect} />
+    <CommandList ref={listRef} className="max-h-[468px] px-3 pb-3">
+      {sections.map((section) => (
+        <div key={section.key} className="py-1">
+          <div className="flex items-center justify-between px-1.5 pb-2 pt-1">
+            <span className="text-[13px] font-semibold text-zinc-800 dark:text-zinc-200">
+              {section.heading}
+            </span>
+            {section.canExpand && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => toggleSectionExpanded(section.key)}
+                className="h-6 gap-0.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                <span>
+                  {section.isExpanded
+                    ? "收起"
+                    : `展开全部 (${section.allItems.length})`}
+                </span>
+                {section.isExpanded ? (
+                  <ChevronUp className="size-3" />
+                ) : (
+                  <ChevronDown className="size-3" />
+                )}
+              </Button>
+            )}
+          </div>
+
+          <CommandGroup className="p-0 [&_[cmdk-group-items]]:grid [&_[cmdk-group-items]]:grid-cols-9 [&_[cmdk-group-items]]:gap-1">
+            {section.visibleItems.map((item) => (
+              <ResultItem
+                key={item.id}
+                item={item}
+                isSelected={item.id === selectedId}
+                onSelect={handleSelect}
+                onHover={setSelectedId}
+                onContextMenu={handleContextMenu}
+              />
             ))}
           </CommandGroup>
-        ))
-      )}
+        </div>
+      ))}
     </CommandList>
   );
 }

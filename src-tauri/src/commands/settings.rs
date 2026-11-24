@@ -1,8 +1,8 @@
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-use crate::commands::launcher::toggle_main_launcher;
+use crate::commands::launcher::{show_main_launcher, toggle_main_launcher};
 use crate::config::AppSettings;
 use crate::error::{AppError, AppResult};
 use crate::platform::window::apply_window_vibrancy;
@@ -63,21 +63,10 @@ pub fn open_settings(app: AppHandle) -> AppResult<()> {
     open_settings_window(&app)
 }
 
+/// Shows the main launcher window and switches it into the embedded ZTools-style Settings view.
 pub fn open_settings_window(app: &AppHandle) -> AppResult<()> {
-    if let Some(existing) = app.get_webview_window("settings") {
-        existing.show()?;
-        existing.unminimize()?;
-        existing.set_focus()?;
-        return Ok(());
-    }
-
-    WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-        .title("Triex 偏好设置")
-        .inner_size(760.0, 560.0)
-        .min_inner_size(640.0, 480.0)
-        .center()
-        .build()?;
-
+    show_main_launcher(app)?;
+    let _ = app.emit("triex://open-settings", ());
     Ok(())
 }
 

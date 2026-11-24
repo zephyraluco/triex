@@ -1,13 +1,28 @@
-import type { RefObject } from "react";
+import type {
+  ClipboardEvent,
+  KeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  RefObject,
+} from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Command as CommandPrimitive } from "cmdk";
 import {
   ArrowLeft,
   Clipboard,
   ExternalLink,
-  Search,
-  Settings,
+  FileText,
+  Image as ImageIcon,
+  MoreVertical,
   X,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { ipc } from "@/lib/ipc";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
@@ -15,15 +30,104 @@ interface SearchHeaderProps {
   inputRef: RefObject<HTMLInputElement | null>;
 }
 
+const DRAG_THRESHOLD_PX = 4;
+
+function startNativeWindowDrag() {
+  void getCurrentWindow().startDragging();
+}
+
+function handleHeaderMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
+  if (event.button !== 0) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("button, input, a, [role='button']")) {
+    return;
+  }
+  startNativeWindowDrag();
+}
+
+function handleInputMouseDown(
+  event: ReactMouseEvent<HTMLInputElement>,
+  currentValue: string,
+) {
+  if (event.button !== 0 || currentValue.length > 0) return;
+  const startX = event.clientX;
+  const startY = event.clientY;
+
+  const onMove = (moveEvent: MouseEvent) => {
+    const dx = Math.abs(moveEvent.clientX - startX);
+    const dy = Math.abs(moveEvent.clientY - startY);
+    if (dx >= DRAG_THRESHOLD_PX || dy >= DRAG_THRESHOLD_PX) {
+      cleanup();
+      startNativeWindowDrag();
+    }
+  };
+
+  const cleanup = () => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", cleanup);
+  };
+
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", cleanup);
+}
+
+function TriexLogoGlyph({ className = "size-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M5.5 7h13M12 7v10.5M7.5 11.5h9"
+        stroke="currentColor"
+        strokeWidth="2.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function TriexBrandBadge() {
+  const settingsOpen = useLauncherStore((s) => s.settingsOpen);
+  const toggleSettings = useLauncherStore((s) => s.toggleSettings);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          size="icon"
+          variant="default"
+          onClick={toggleSettings}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void ipc.showBrandContextMenu();
+          }}
+          className="size-9 shrink-0 rounded-full shadow-xs"
+        >
+          <TriexLogoGlyph className="size-5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {settingsOpen ? "返回搜索（右键打开菜单）" : "打开设置（右键打开菜单）"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function SearchHeader({ inputRef }: SearchHeaderProps) {
   const query = useLauncherStore((s) => s.query);
   const setQuery = useLauncherStore((s) => s.setQuery);
   const subInput = useLauncherStore((s) => s.subInput);
   const setSubInput = useLauncherStore((s) => s.setSubInput);
+  const settingsOpen = useLauncherStore((s) => s.settingsOpen);
+  const closeSettings = useLauncherStore((s) => s.closeSettings);
   const activePlugin = useLauncherStore((s) => s.activePlugin);
   const setActivePlugin = useLauncherStore((s) => s.setActivePlugin);
   const clipboard = useLauncherStore((s) => s.clipboard);
   const setClipboard = useLauncherStore((s) => s.setClipboard);
+  const attachment = useLauncherStore((s) => s.attachment);
+  const setAttachment = useLauncherStore((s) => s.setAttachment);
+  const statusMessage = useLauncherStore((s) => s.statusMessage);
 
   const handleClosePlugin = () => {
     void ipc.closePlugin();
@@ -40,91 +144,266 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
     void ipc.forwardSubInputValue(value);
   };
 
+  const handlePaste = (event: ClipboardEvent<HTMLInputElement>) => {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        event.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          const previewUrl = URL.createObjectURL(file);
+          setAttachment({
+            kind: "image",
+            label: file.name || "剪贴板图片",
+            previewUrl,
+          });
+        }
+        return;
+      }
+      if (item.kind === "file") {
+        event.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          setAttachment({
+            kind: "file",
+            label: file.name,
+          });
+        }
+        return;
+      }
+    }
+
+    const pastedText = event.clipboardData.getData("text/plain");
+    if (pastedText.length > 60 || pastedText.includes("\n")) {
+      event.preventDefault();
+      setAttachment({
+        kind: "text",
+        label: `${pastedText.trim().slice(0, 24)}…`,
+        rawText: pastedText,
+      });
+    }
+  };
+
+  const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Backspace" && query.length === 0 && attachment) {
+      event.preventDefault();
+      setAttachment(null);
+    }
+  };
+
+  if (settingsOpen) {
+    return (
+      <div>
+        <div
+          onMouseDown={handleHeaderMouseDown}
+          className="flex h-16 shrink-0 items-center justify-between px-4"
+        >
+          <div className="inline-flex h-9 items-center gap-1 rounded-full border border-border bg-secondary/80 p-1">
+            <Badge
+              variant="default"
+              className="h-7 gap-1.5 rounded-full px-2.5 text-xs font-medium"
+            >
+              <TriexLogoGlyph className="size-3.5" />
+              <span>设置</span>
+            </Badge>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                closeSettings();
+                requestAnimationFrame(() => inputRef.current?.focus());
+              }}
+              className="h-7 gap-1 rounded-full px-2.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <span>返回搜索</span>
+              <X className="size-3.5" />
+            </Button>
+          </div>
+
+          <div className="h-full flex-1" />
+
+          <div className="flex items-center gap-1.5">
+            {statusMessage && (
+              <Badge variant="secondary" className="mr-1 font-normal">
+                {statusMessage}
+              </Badge>
+            )}
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => void ipc.showBrandContextMenu()}
+                  className="size-8 rounded-full text-muted-foreground"
+                >
+                  <MoreVertical className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">更多操作</TooltipContent>
+            </Tooltip>
+
+            <TriexBrandBadge />
+          </div>
+        </div>
+        <Separator />
+      </div>
+    );
+  }
+
   return (
     <div
-      data-tauri-drag-region
-      className="flex h-[60px] shrink-0 items-center gap-2.5 border-b border-border/70 px-4"
+      onMouseDown={handleHeaderMouseDown}
+      className="flex h-16 shrink-0 items-center gap-3 px-4"
     >
       {activePlugin ? (
         <>
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="sm"
             onClick={handleClosePlugin}
-            title="返回搜索 (Esc)"
-            className="flex h-7 items-center gap-1.5 rounded-md bg-secondary/90 px-2.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent cursor-pointer"
+            className="h-8 shrink-0 gap-1.5 rounded-full px-3"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
+            <ArrowLeft className="size-3.5" />
             <span>{activePlugin.pluginName}</span>
-          </button>
+          </Button>
 
           <input
             ref={inputRef}
             value={subInput}
             onChange={(e) => handleSubInputChange(e.target.value)}
+            onMouseDown={(e) => handleInputMouseDown(e, subInput)}
             placeholder={activePlugin.subInputPlaceholder || "输入插件指令..."}
             autoFocus
-            className="h-10 flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
+            className="h-11 flex-1 bg-transparent text-[20px] font-normal text-foreground outline-none placeholder:text-muted-foreground"
           />
 
-          <button
-            type="button"
-            onClick={handleDetachPlugin}
-            title="分离为独立窗口"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
-          >
-            <ExternalLink className="h-4 w-4" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={handleDetachPlugin}
+                className="size-8 rounded-full text-muted-foreground"
+              >
+                <ExternalLink className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">分离为独立窗口</TooltipContent>
+          </Tooltip>
+
+          <TriexBrandBadge />
         </>
       ) : (
         <>
-          <Search className="h-5 w-5 shrink-0 text-muted-foreground" />
+          {attachment && (
+            <Badge
+              variant="secondary"
+              className="h-8 max-w-[200px] shrink-0 gap-1.5 rounded-lg border border-border px-2 text-xs font-medium"
+            >
+              {attachment.kind === "image" && attachment.previewUrl ? (
+                <img
+                  src={attachment.previewUrl}
+                  alt=""
+                  className="size-5 rounded object-cover"
+                />
+              ) : attachment.kind === "image" ? (
+                <ImageIcon className="size-3.5 shrink-0 text-primary" />
+              ) : (
+                <FileText className="size-3.5 shrink-0 text-primary" />
+              )}
+              <span className="truncate">{attachment.label}</span>
+              <button
+                type="button"
+                onClick={() => setAttachment(null)}
+                className="text-muted-foreground hover:text-foreground cursor-pointer"
+                aria-label="移除粘贴附件"
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          )}
 
           <CommandPrimitive.Input
             ref={inputRef}
             value={query}
             onValueChange={setQuery}
-            placeholder="搜索应用、系统命令或插件（支持拼音 / 首字母）..."
+            onPaste={handlePaste}
+            onKeyDown={handleInputKeyDown}
+            onMouseDown={(e) => handleInputMouseDown(e, query)}
+            placeholder={
+              attachment
+                ? "选择处理方式或继续输入指令..."
+                : "搜索应用和指令 / 粘贴文件或图片"
+            }
             autoFocus
-            className="h-10 flex-1 bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground/80"
+            className="h-11 flex-1 bg-transparent text-[22px] font-normal tracking-tight text-foreground caret-foreground outline-none placeholder:font-light placeholder:text-muted-foreground/80"
           />
 
-          {clipboard && query.length === 0 && (
-            <div className="flex max-w-[165px] items-center gap-1 rounded-md border border-border/70 bg-secondary/70 px-2 py-1 text-[11px] text-muted-foreground">
-              <Clipboard className="h-3 w-3 shrink-0" />
-              <span className="truncate">{clipboard.preview}</span>
-              <button
-                type="button"
-                onClick={() => setClipboard(null)}
-                className="ml-0.5 text-muted-foreground/70 hover:text-foreground cursor-pointer"
-                aria-label="清除剪贴板提示"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
+          {statusMessage && (
+            <Badge variant="secondary" className="shrink-0 font-normal">
+              {statusMessage}
+            </Badge>
+          )}
+
+          {clipboard && query.length === 0 && !attachment && !statusMessage && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="secondary"
+                  onClick={() =>
+                    setAttachment({
+                      kind: "text",
+                      label: clipboard.preview.slice(0, 22),
+                      rawText: clipboard.preview,
+                    })
+                  }
+                  className="h-7 max-w-[170px] shrink-0 cursor-pointer gap-1.5 rounded-full px-2.5 text-[11px] font-normal text-muted-foreground hover:text-foreground"
+                >
+                  <Clipboard className="size-3 shrink-0" />
+                  <span className="truncate">{clipboard.preview}</span>
+                  <span
+                    role="button"
+                    tabIndex={-1}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setClipboard(null);
+                    }}
+                    className="text-muted-foreground/70 hover:text-foreground"
+                    aria-label="清除剪贴板提示"
+                  >
+                    <X className="size-3" />
+                  </span>
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">点击载入当前剪贴板内容</TooltipContent>
+            </Tooltip>
           )}
 
           {query.length > 0 && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => {
                 setQuery("");
                 inputRef.current?.focus();
               }}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+              className="size-7 shrink-0 rounded-full text-muted-foreground"
               aria-label="清空输入"
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
+              <X className="size-4" />
+            </Button>
           )}
 
-          <button
-            type="button"
-            onClick={() => void ipc.openSettings()}
-            title="Triex 偏好设置"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
+          <TriexBrandBadge />
         </>
       )}
     </div>

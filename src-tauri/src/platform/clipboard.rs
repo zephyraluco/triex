@@ -49,6 +49,64 @@ pub fn read_clipboard_text() -> Option<String> {
     None
 }
 
+/// Writes plain UTF-16 text into the Windows system clipboard.
+#[cfg(windows)]
+pub fn write_clipboard_text(text: &str) -> crate::error::AppResult<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+    const CF_UNICODETEXT: u32 = 13;
+
+    let wide: Vec<u16> = std::ffi::OsStr::new(text)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let byte_len = wide.len() * std::mem::size_of::<u16>();
+
+    unsafe {
+        OpenClipboard(None)
+            .map_err(|e| crate::error::AppError::Platform(format!("OpenClipboard failed: {e}")))?;
+
+        let write_res = (|| -> crate::error::AppResult<()> {
+            EmptyClipboard().map_err(|e| {
+                crate::error::AppError::Platform(format!("EmptyClipboard failed: {e}"))
+            })?;
+            let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len).map_err(|e| {
+                crate::error::AppError::Platform(format!("GlobalAlloc failed: {e}"))
+            })?;
+            let ptr = GlobalLock(hmem) as *mut u16;
+            if ptr.is_null() {
+                let _ = GlobalFree(hmem);
+                return Err(crate::error::AppError::Platform(
+                    "GlobalLock returned null".to_string(),
+                ));
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+            let _ = GlobalUnlock(hmem);
+
+            if SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0)).is_err() {
+                let _ = GlobalFree(hmem);
+                return Err(crate::error::AppError::Platform(
+                    "SetClipboardData failed".to_string(),
+                ));
+            }
+            Ok(())
+        })();
+
+        let _ = CloseClipboard();
+        write_res
+    }
+}
+
+#[cfg(not(windows))]
+pub fn write_clipboard_text(_text: &str) -> crate::error::AppResult<()> {
+    Ok(())
+}
+
 pub fn current_clipboard_snapshot() -> Option<ClipboardSnapshot> {
     let raw = read_clipboard_text()?;
     let trimmed = raw.trim();

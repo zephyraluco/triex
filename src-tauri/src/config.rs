@@ -15,6 +15,8 @@ pub struct AppSettings {
     pub hide_on_blur: bool,
     pub custom_scan_dirs: Vec<String>,
     pub excluded_apps: Vec<String>,
+    #[serde(default)]
+    pub pinned_items: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,6 +46,7 @@ impl Default for AppSettings {
             hide_on_blur: true,
             custom_scan_dirs: Vec::new(),
             excluded_apps: Vec::new(),
+            pinned_items: Vec::new(),
         }
     }
 }
