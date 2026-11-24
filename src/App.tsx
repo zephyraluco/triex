@@ -1,51 +1,47 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useRef } from "react";
+import { Command } from "@/components/ui/command";
+import { SearchHeader } from "@/components/launcher/SearchHeader";
+import { ResultList } from "@/components/launcher/ResultList";
+import { ActionMenu } from "@/components/launcher/ActionMenu";
+import { useSearch } from "@/hooks/useSearch";
+import { useWindowAutoResize } from "@/hooks/useWindowAutoResize";
+import { useLauncherShortcuts } from "@/hooks/useLauncherShortcuts";
+import { useThemeSync } from "@/hooks/useThemeSync";
+import { useLauncherStore } from "@/stores/useLauncherStore";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+export default function App() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const selectedId = useLauncherStore((s) => s.selectedId);
+  const setSelectedId = useLauncherStore((s) => s.setSelectedId);
+  const activePlugin = useLauncherStore((s) => s.activePlugin);
+
+  useThemeSync();
+  useSearch();
+  useWindowAutoResize(containerRef);
+  useLauncherShortcuts(inputRef);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
+    <div
+      ref={containerRef}
+      className="flex w-full flex-col overflow-hidden rounded-xl border border-border/80 bg-background/85 text-foreground shadow-2xl backdrop-blur-xl"
+    >
+      <Command
+        shouldFilter={false}
+        loop
+        value={selectedId}
+        onValueChange={setSelectedId}
       >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        <SearchHeader inputRef={inputRef} />
+
+        {!activePlugin && (
+          <>
+            <ResultList />
+            <ActionMenu />
+          </>
+        )}
+      </Command>
+    </div>
   );
 }
-
-export default App;

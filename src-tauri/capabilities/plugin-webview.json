@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "plugin-webview",
+  "description": "Minimal sandboxed capability for dynamically mounted plugin child webviews",
+  "windows": ["main", "plugin-*"],
+  "webviews": ["plugin-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-emit"
+  ]
+}
