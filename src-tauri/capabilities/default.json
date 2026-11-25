@@ -3,6 +3,7 @@
   "identifier": "default",
   "description": "Capabilities for the main launcher and settings windows",
   "windows": ["main", "settings"],
+  "webviews": ["main", "settings-view:*"],
   "permissions": [
     "core:default",
     "core:window:allow-set-size",

@@ -1,16 +1,33 @@
 use crate::error::{AppError, AppResult};
 use crate::storage::Database;
 
-/// Extracts the owning plugin ID from a plugin webview label (`plugin-<id>`).
+/// Ensures the caller is a trusted host webview (`main` or `settings-view:*`),
+/// preventing sandboxed `plugin-*` webviews from invoking privileged host commands.
+pub fn require_host_webview(webview: &tauri::Webview) -> AppResult<()> {
+    let label = webview.label();
+    if label == "main" || label.starts_with("settings-view:") {
+        Ok(())
+    } else {
+        Err(AppError::PermissionDenied(format!(
+            "Plugin webview '{label}' is not permitted to invoke host command"
+        )))
+    }
+}
+
+/// Extracts the owning plugin ID from a plugin webview label
+/// (`plugin-<id>`, `plugin-<id>:<seq>`, or `plugin-detached-<id>`).
 pub fn plugin_id_from_label(label: &str) -> AppResult<&str> {
-    label
-        .strip_prefix("plugin-")
-        .filter(|id| !id.is_empty())
-        .ok_or_else(|| {
-            AppError::PermissionDenied(format!(
-                "Caller webview '{label}' is not a valid plugin webview"
-            ))
-        })
+    let stripped = label
+        .strip_prefix("plugin-detached-")
+        .or_else(|| label.strip_prefix("plugin-"))
+        .unwrap_or("");
+    let id = stripped.split(':').next().unwrap_or("");
+    if id.is_empty() {
+        return Err(AppError::PermissionDenied(format!(
+            "Caller webview '{label}' is not a valid plugin webview"
+        )));
+    }
+    Ok(id)
 }
 
 /// Verifies that the plugin has explicitly declared the required permission in `plugin.json`.

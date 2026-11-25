@@ -34,7 +34,17 @@ impl Database {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "busy_timeout", 5000)?;
-        conn.execute_batch(INIT_MIGRATION_SQL)?;
+        let mut conn = conn;
+        let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if version > 1 {
+            return Err(AppError::InvalidInput(format!("Database schema {version} is newer than supported schema 1")));
+        }
+        if version < 1 {
+            let transaction = conn.transaction()?;
+            transaction.execute_batch(INIT_MIGRATION_SQL)?;
+            transaction.pragma_update(None, "user_version", 1)?;
+            transaction.commit()?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })

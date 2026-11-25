@@ -1,46 +1,21 @@
-import { useEffect, type RefObject } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { ipc, type ActivePluginSession, type AppSettings } from "@/lib/ipc";
+import { useEffect } from "react";
+import { ipc } from "@/lib/ipc";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
-const HOME_RESET_FETCH_LIMIT = 100;
-
 /**
- * Handles ZTools-style keyboard interactions (Esc hierarchy, Ctrl+M dashboard toggle,
- * Ctrl+K action menu, Alt+Enter admin launch) and Tauri lifecycle events.
+ * Handles ZTools-style keyboard shortcuts on the main launcher shell:
+ * layered Escape exit, `Ctrl+M` dashboard toggle, `Ctrl+K` item context menu,
+ * and `Alt+Enter` elevated administrator launch.
  */
-export function useLauncherShortcuts(inputRef: RefObject<HTMLInputElement | null>) {
-  const setActivePlugin = useLauncherStore((s) => s.setActivePlugin);
-  const setSubInputPlaceholder = useLauncherStore((s) => s.setSubInputPlaceholder);
-  const setClipboard = useLauncherStore((s) => s.setClipboard);
-  const setPinnedItems = useLauncherStore((s) => s.setPinnedItems);
-  const setStatusMessage = useLauncherStore((s) => s.setStatusMessage);
-  const setSearchResult = useLauncherStore((s) => s.setSearchResult);
-  const openSettings = useLauncherStore((s) => s.openSettings);
-  const toggleSettings = useLauncherStore((s) => s.toggleSettings);
-  const toggleDashboard = useLauncherStore((s) => s.toggleDashboard);
-  const resetSearch = useLauncherStore((s) => s.resetSearch);
-
-  useEffect(() => {
-    void ipc
-      .getSettings()
-      .then((settings) => setPinnedItems(settings.pinnedItems ?? []))
-      .catch(() => {});
-  }, [setPinnedItems]);
-
+export function useLauncherShortcuts() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const state = useLauncherStore.getState();
 
       if (event.key === "Escape") {
         event.preventDefault();
-        if (state.actionMenuOpen) {
-          state.closeActionMenu();
-          return;
-        }
         if (state.settingsOpen) {
-          state.closeSettings();
-          requestAnimationFrame(() => inputRef.current?.focus());
+          void ipc.closeSettings();
           return;
         }
         if (state.activePlugin) {
@@ -90,105 +65,5 @@ export function useLauncherShortcuts(inputRef: RefObject<HTMLInputElement | null
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [inputRef]);
-
-  useEffect(() => {
-    const unlisteners = [
-      listen<number>("triex://launcher-hidden", async (event) => {
-        const epoch = event.payload;
-        const isSettingsOpen = useLauncherStore.getState().settingsOpen;
-        resetSearch();
-        setStatusMessage(null);
-        if (isSettingsOpen) {
-          requestAnimationFrame(() => {
-            void ipc.completeHide(epoch);
-          });
-          return;
-        }
-        try {
-          const response = await ipc.searchItems("", Date.now(), HOME_RESET_FETCH_LIMIT);
-          setSearchResult(response.items, response.totalIndexed);
-        } catch {
-          // Ignore errors during background pre-reset.
-        }
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              void ipc.completeHide(epoch);
-            });
-          });
-        });
-      }),
-      listen("triex://launcher-shown", () => {
-        const state = useLauncherStore.getState();
-        if (
-          !state.settingsOpen &&
-          (state.query.length > 0 || state.attachment || state.showDashboard)
-        ) {
-          resetSearch();
-        }
-        requestAnimationFrame(() => {
-          inputRef.current?.focus();
-          inputRef.current?.select();
-        });
-        void ipc
-          .getClipboardSnapshot()
-          .then((snap) => setClipboard(snap))
-          .catch(() => setClipboard(null));
-      }),
-      listen("triex://open-settings", () => {
-        openSettings();
-      }),
-      listen("triex://toggle-settings", () => {
-        toggleSettings();
-      }),
-      listen("triex://toggle-dashboard", () => {
-        const state = useLauncherStore.getState();
-        if (state.settingsOpen) {
-          state.closeSettings();
-        }
-        toggleDashboard();
-      }),
-      listen<AppSettings>("triex://settings-updated", (e) => {
-        setPinnedItems(e.payload.pinnedItems ?? []);
-      }),
-      listen<ActivePluginSession>("triex://plugin-opened", (e) => {
-        setActivePlugin(e.payload);
-        requestAnimationFrame(() => inputRef.current?.focus());
-      }),
-      listen("triex://plugin-closed", () => {
-        setActivePlugin(null);
-        requestAnimationFrame(() => inputRef.current?.focus());
-      }),
-      listen<string>("triex://sub-input-placeholder", (e) => {
-        setSubInputPlaceholder(e.payload);
-      }),
-      listen<string>("triex://status-message", (e) => {
-        setStatusMessage(e.payload);
-        window.setTimeout(() => {
-          if (useLauncherStore.getState().statusMessage === e.payload) {
-            setStatusMessage(null);
-          }
-        }, 1800);
-      }),
-    ];
-
-    return () => {
-      for (const p of unlisteners) {
-        void p.then((unlisten) => unlisten());
-      }
-    };
-  }, [
-    inputRef,
-    openSettings,
-    resetSearch,
-    setActivePlugin,
-    setClipboard,
-    setPinnedItems,
-    setSearchResult,
-    setStatusMessage,
-    setSubInputPlaceholder,
-    toggleDashboard,
-    toggleSettings,
-  ]);
+  }, []);
 }

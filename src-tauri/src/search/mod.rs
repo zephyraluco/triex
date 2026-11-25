@@ -91,6 +91,14 @@ impl SearchEngine {
         }
     }
 
+    pub fn refresh_usage(&mut self, usage: &HashMap<String, UsageRecord>) {
+        let now = now_unix_secs();
+        for item in &mut self.items {
+            item.frecency = usage.get(&item.raw.id)
+                .map(|record| compute_frecency(*record, now)).unwrap_or(0.0);
+        }
+    }
+
     pub fn get_raw_item(&self, item_id: &str) -> Option<&RawSearchItem> {
         self.item_positions
             .get(item_id)

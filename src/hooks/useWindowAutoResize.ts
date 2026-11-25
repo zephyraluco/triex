@@ -4,7 +4,6 @@ import { useLauncherStore } from "@/stores/useLauncherStore";
 
 const MIN_WINDOW_HEIGHT = 64;
 const MAX_WINDOW_HEIGHT = 540;
-const EMBEDDED_SETTINGS_HEIGHT = 580;
 
 /**
  * Synchronizes the borderless Tauri launcher window height with rendered content.
@@ -16,13 +15,10 @@ export function useWindowAutoResize(containerRef: RefObject<HTMLDivElement | nul
   const lastHeightRef = useRef<number>(MIN_WINDOW_HEIGHT);
 
   useEffect(() => {
-    if (activePlugin) return;
-
-    if (settingsOpen) {
-      if (lastHeightRef.current !== EMBEDDED_SETTINGS_HEIGHT) {
-        lastHeightRef.current = EMBEDDED_SETTINGS_HEIGHT;
-        void ipc.resizeWindow(EMBEDDED_SETTINGS_HEIGHT);
-      }
+    if (activePlugin || settingsOpen) {
+      // Child webviews own the window height on the Rust side; reset cached height so
+      // returning to search mode always re-syncs both Window and shell Webview bounds.
+      lastHeightRef.current = 0;
       return;
     }
 

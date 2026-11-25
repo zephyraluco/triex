@@ -3,6 +3,39 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
 
+/// Only supplied fields are merged into the authoritative backend snapshot.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingsPatch {
+    pub hotkey: Option<String>,
+    pub theme: Option<ThemeMode>,
+    pub vibrancy: Option<VibrancyMode>,
+    pub max_results: Option<usize>,
+    pub launch_on_startup: Option<bool>,
+    pub hide_on_blur: Option<bool>,
+    pub custom_scan_dirs: Option<Vec<String>>,
+    pub excluded_apps: Option<Vec<String>>,
+}
+
+impl SettingsPatch {
+    pub fn apply(self, settings: &mut AppSettings) -> AppResult<()> {
+        if let Some(value) = self.hotkey { settings.hotkey = value.trim().to_owned(); }
+        if let Some(value) = self.theme { settings.theme = value; }
+        if let Some(value) = self.vibrancy { settings.vibrancy = value; }
+        if let Some(value) = self.max_results {
+            if !(5..=100).contains(&value) {
+                return Err(crate::error::AppError::InvalidInput("maxResults must be between 5 and 100".into()));
+            }
+            settings.max_results = value;
+        }
+        if let Some(value) = self.launch_on_startup { settings.launch_on_startup = value; }
+        if let Some(value) = self.hide_on_blur { settings.hide_on_blur = value; }
+        if let Some(value) = self.custom_scan_dirs { settings.custom_scan_dirs = value; }
+        if let Some(value) = self.excluded_apps { settings.excluded_apps = value; }
+        Ok(())
+    }
+}
+
 /// Application-wide persistent user settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

@@ -53,6 +53,7 @@ export function ResultList() {
   const handleContextMenu = useCallback(
     (item: SearchResultItem, event: MouseEvent<HTMLDivElement>) => {
       event.preventDefault();
+      event.stopPropagation();
       setSelectedId(item.id);
       void ipc.showItemContextMenu(item.id);
     },
@@ -193,7 +194,7 @@ export function ResultList() {
 
     const handleGridKeyDown = (event: KeyboardEvent) => {
       const state = useLauncherStore.getState();
-      if (state.activePlugin || state.actionMenuOpen) return;
+      if (state.activePlugin || state.settingsOpen) return;
 
       const idx = flatCoords.findIndex((c) => c.item.id === state.selectedId);
       const currentIndex = idx === -1 ? 0 : idx;

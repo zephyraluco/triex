@@ -11,19 +11,19 @@ pub mod tray;
 
 use std::sync::atomic::Ordering;
 
-use tauri::{Manager, WindowEvent};
+use tauri::window::WindowBuilder;
+use tauri::{LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tracing_subscriber::EnvFilter;
 
-use crate::commands::launcher::{
-    handle_context_menu_event, hide_main_launcher, show_main_launcher,
-};
-use crate::commands::search::trigger_rebuild_index;
+use crate::commands::launcher::{hide_main_launcher, show_main_launcher};
+use crate::commands::menu::handle_context_menu_event;
+use crate::commands::search::{refresh_directory_watcher, trigger_rebuild_index};
 use crate::commands::settings::register_launcher_hotkey;
 use crate::config::AppPaths;
-use crate::platform::scanner::watcher::spawn_directory_watcher;
-use crate::platform::scanner::win32::start_menu_directories;
-use crate::platform::window::{apply_window_vibrancy, position_on_cursor_monitor};
+use crate::platform::window::{
+    apply_window_vibrancy, is_window_or_child_foreground, position_on_cursor_monitor,
+};
 use crate::protocol::icon::handle_icon_protocol;
 use crate::protocol::plugin::handle_plugin_protocol;
 use crate::state::AppState;
@@ -75,39 +75,77 @@ pub fn run() {
             }
             app.manage(state);
 
-            // Configure main launcher window visuals and focus behavior.
-            if let Some(main_win) = app.get_webview_window("main") {
-                apply_window_vibrancy(&main_win, settings.vibrancy, settings.theme);
-                position_on_cursor_monitor(&main_win);
+            // Create a pure top-level container Window hosting non-overlapping child WebViews:
+            // `main` (header + search shell) and at most one below-header view (settings or plugin).
+            let main_win = WindowBuilder::new(app, "main")
+                .title("Triex")
+                .inner_size(800.0, 64.0)
+                .resizable(false)
+                .decorations(false)
+                .transparent(true)
+                .shadow(true)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .center()
+                .visible(true)
+                .build()?;
 
-                let menu_handle = app.handle().clone();
-                main_win.on_menu_event(move |_window, event| {
-                    let id = event.id().as_ref();
-                    if id.starts_with("ctx:") {
-                        handle_context_menu_event(&menu_handle, id);
+            let shell_builder = WebviewBuilder::new("main", WebviewUrl::App("index.html".into()))
+                .transparent(true);
+            let _shell_wv = main_win.add_child(
+                shell_builder,
+                LogicalPosition::new(0.0, 0.0),
+                LogicalSize::new(800.0, 64.0),
+            )?;
+
+            apply_window_vibrancy(&main_win, settings.vibrancy, settings.theme);
+            position_on_cursor_monitor(&main_win);
+
+            let menu_handle = app.handle().clone();
+            main_win.on_menu_event(move |_window, event| {
+                let id = event.id().as_ref();
+                if id.starts_with("ctx:") {
+                    handle_context_menu_event(&menu_handle, id);
+                }
+            });
+
+            let handle = app.handle().clone();
+            main_win.on_window_event(move |event| {
+                if let WindowEvent::ThemeChanged(theme) = event {
+                    let settings = handle.state::<AppState>().current_settings();
+                    if settings.theme == crate::config::ThemeMode::System
+                        && let Some(window) = handle.get_window("main")
+                    {
+                        // Use the event's resolved preference; the window query may
+                        // still reflect the previous theme while handling this event.
+                        let resolved = match theme {
+                            tauri::Theme::Dark => crate::config::ThemeMode::Dark,
+                            _ => crate::config::ThemeMode::Light,
+                        };
+                        apply_window_vibrancy(&window, settings.vibrancy, resolved);
                     }
-                });
-
-                let handle = app.handle().clone();
-                main_win.on_window_event(move |event| {
-                    if let WindowEvent::Focused(false) = event {
-                        let st = handle.state::<AppState>();
-                        let has_active_plugin = st
-                            .active_plugin
-                            .lock()
-                            .map(|g| g.is_some())
-                            .unwrap_or(false);
-                        let menu_open = st.context_menu_open.load(Ordering::SeqCst);
-                        // Avoid closing when focus moves into a child plugin webview or native popup menu.
-                        if st.current_settings().hide_on_blur
-                            && !has_active_plugin
-                            && !menu_open
+                }
+                if let WindowEvent::Focused(false) = event {
+                    let h = handle.clone();
+                    // Debounce briefly so focus transitions between sibling child WebView2 HWNDs
+                    // settle before checking whether OS foreground truly left Triex.
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(35)).await;
+                        let st = h.state::<AppState>();
+                        if !st.current_settings().hide_on_blur
+                            || st.context_menu_open.load(Ordering::SeqCst)
+                            || !st.is_shown.load(Ordering::SeqCst)
                         {
-                            hide_main_launcher(&handle, false);
+                            return;
                         }
-                    }
-                });
-            }
+                        if let Some(win) = h.get_window("main")
+                            && !is_window_or_child_foreground(&win)
+                        {
+                            hide_main_launcher(&h, false);
+                        }
+                    });
+                }
+            });
 
             if let Err(err) = setup_tray(app.handle()) {
                 tracing::warn!("Failed to initialize system tray: {err}");
@@ -125,18 +163,7 @@ pub fn run() {
                 }
             });
 
-            // Watch Start Menu directories for newly installed/removed apps.
-            let watch_dirs = start_menu_directories(&settings.custom_scan_dirs);
-            let watch_handle = app.handle().clone();
-            let watcher = spawn_directory_watcher(watch_dirs, move || {
-                let h = watch_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = trigger_rebuild_index(&h).await;
-                });
-            });
-            if let Ok(mut guard) = app.state::<AppState>().dir_watcher.lock() {
-                *guard = watcher;
-            }
+            refresh_directory_watcher(app.handle())?;
 
             Ok(())
         })
@@ -149,11 +176,11 @@ pub fn run() {
             commands::launcher::remove_recent_item,
             commands::launcher::show_item_context_menu,
             commands::launcher::show_brand_context_menu,
-            commands::launcher::set_settings_view_open,
             commands::launcher::resize_window,
             commands::launcher::hide_window,
             commands::launcher::complete_hide,
             commands::clipboard::get_clipboard_snapshot,
+            commands::clipboard::read_clipboard_text,
             commands::clipboard::paste_to_previous_window,
             commands::plugin::list_plugins,
             commands::plugin::set_plugin_enabled,
@@ -168,6 +195,8 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::open_settings,
+            commands::settings::close_settings,
+            commands::settings::toggle_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running triex application");

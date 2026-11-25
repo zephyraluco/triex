@@ -2,21 +2,8 @@ import { create } from "zustand";
 import {
   ipc,
   type ActivePluginSession,
-  type ClipboardSnapshot,
   type SearchResultItem,
 } from "@/lib/ipc";
-
-export type SettingsNavKey =
-  | "general"
-  | "appearance"
-  | "index"
-  | "plugins"
-  | "commands";
-
-export interface ContextMenuPosition {
-  x: number;
-  y: number;
-}
 
 export interface PastedAttachment {
   kind: "image" | "text" | "file";
@@ -35,13 +22,8 @@ interface LauncherState {
   showDashboard: boolean;
   expandedSections: Record<string, boolean>;
   settingsOpen: boolean;
-  settingsTab: SettingsNavKey;
   activePlugin: ActivePluginSession | null;
-  clipboard: ClipboardSnapshot | null;
   attachment: PastedAttachment | null;
-  actionMenuOpen: boolean;
-  actionMenuPos: ContextMenuPosition | null;
-  isRebuilding: boolean;
   statusMessage: string | null;
 
   setQuery: (query: string) => void;
@@ -52,22 +34,18 @@ interface LauncherState {
   toggleDashboard: () => void;
   setShowDashboard: (show: boolean) => void;
   toggleSectionExpanded: (sectionKey: string) => void;
-  openSettings: (tab?: SettingsNavKey) => void;
+  setSettingsOpen: (open: boolean) => void;
+  openSettings: () => void;
   closeSettings: () => void;
   toggleSettings: () => void;
-  setSettingsTab: (tab: SettingsNavKey) => void;
   setActivePlugin: (session: ActivePluginSession | null) => void;
   setSubInputPlaceholder: (placeholder: string) => void;
-  setClipboard: (snapshot: ClipboardSnapshot | null) => void;
   setAttachment: (attachment: PastedAttachment | null) => void;
-  openActionMenu: (pos?: ContextMenuPosition | null) => void;
-  closeActionMenu: () => void;
-  setIsRebuilding: (rebuilding: boolean) => void;
   setStatusMessage: (message: string | null) => void;
   resetSearch: () => void;
 }
 
-export const useLauncherStore = create<LauncherState>((set, get) => ({
+export const useLauncherStore = create<LauncherState>((set) => ({
   query: "",
   subInput: "",
   results: [],
@@ -77,21 +55,14 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
   showDashboard: false,
   expandedSections: {},
   settingsOpen: false,
-  settingsTab: "general",
   activePlugin: null,
-  clipboard: null,
   attachment: null,
-  actionMenuOpen: false,
-  actionMenuPos: null,
-  isRebuilding: false,
   statusMessage: null,
 
   setQuery: (query) =>
     set({
       query,
       expandedSections: {},
-      actionMenuOpen: false,
-      actionMenuPos: null,
     }),
   setSubInput: (subInput) => set({ subInput }),
   setSearchResult: (items, totalIndexed) =>
@@ -114,38 +85,26 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
         [sectionKey]: !state.expandedSections[sectionKey],
       },
     })),
-  openSettings: (tab) => {
-    void ipc.setSettingsViewOpen(true);
+  setSettingsOpen: (settingsOpen) =>
     set((state) => ({
-      settingsOpen: true,
-      settingsTab: tab ?? state.settingsTab,
-      actionMenuOpen: false,
-    }));
+      settingsOpen,
+      activePlugin: settingsOpen ? null : state.activePlugin,
+    })),
+  openSettings: () => {
+    void ipc.openSettings();
   },
   closeSettings: () => {
-    void ipc.setSettingsViewOpen(false);
-    set({ settingsOpen: false });
+    void ipc.closeSettings();
   },
   toggleSettings: () => {
-    if (get().settingsOpen) {
-      get().closeSettings();
-    } else {
-      get().openSettings();
-    }
+    void ipc.toggleSettings();
   },
-  setSettingsTab: (settingsTab) => set({ settingsTab }),
-  setActivePlugin: (activePlugin) => {
-    if (get().settingsOpen) {
-      void ipc.setSettingsViewOpen(false);
-    }
+  setActivePlugin: (activePlugin) =>
     set({
       activePlugin,
       settingsOpen: false,
       subInput: "",
-      actionMenuOpen: false,
-      actionMenuPos: null,
-    });
-  },
+    }),
   setSubInputPlaceholder: (placeholder) =>
     set((state) =>
       state.activePlugin
@@ -157,11 +116,7 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
           }
         : state,
     ),
-  setClipboard: (clipboard) => set({ clipboard }),
   setAttachment: (attachment) => set({ attachment }),
-  openActionMenu: (pos = null) => set({ actionMenuOpen: true, actionMenuPos: pos }),
-  closeActionMenu: () => set({ actionMenuOpen: false, actionMenuPos: null }),
-  setIsRebuilding: (isRebuilding) => set({ isRebuilding }),
   setStatusMessage: (statusMessage) => set({ statusMessage }),
   resetSearch: () =>
     set({
@@ -170,7 +125,5 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
       attachment: null,
       showDashboard: false,
       expandedSections: {},
-      actionMenuOpen: false,
-      actionMenuPos: null,
     }),
 }));

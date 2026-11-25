@@ -6,14 +6,26 @@ use tauri::Manager;
 use crate::config::AppPaths;
 use crate::state::AppState;
 
-/// Handles `plugin://<plugin-id>/<asset-path>` requests from sandboxed plugin directories.
+/// Handles `plugin://<plugin-id>/<asset-path>` (macOS/Linux) and
+/// `http://plugin.localhost/<plugin-id>/<asset-path>` (Windows WebView2) requests.
 pub fn handle_plugin_protocol(
     app: &tauri::AppHandle,
     request: Request<Vec<u8>>,
 ) -> Response<Vec<u8>> {
     let uri = request.uri();
-    let Some(plugin_id) = uri.host() else {
-        return error_response(StatusCode::BAD_REQUEST);
+    let host = uri.host().unwrap_or_default();
+    let raw_path = uri.path().trim_start_matches('/');
+
+    let (plugin_id, rel_path) = if host.eq_ignore_ascii_case("plugin.localhost")
+        || host.eq_ignore_ascii_case("localhost")
+        || host.is_empty()
+    {
+        let mut parts = raw_path.splitn(2, '/');
+        let id = parts.next().unwrap_or_default();
+        let rest = parts.next().unwrap_or_default();
+        (id, rest)
+    } else {
+        (host, raw_path)
     };
 
     if plugin_id.is_empty()
@@ -24,7 +36,6 @@ pub fn handle_plugin_protocol(
         return error_response(StatusCode::BAD_REQUEST);
     }
 
-    let rel_path = uri.path().trim_start_matches('/');
     let rel_path = if rel_path.is_empty() {
         "index.html"
     } else {

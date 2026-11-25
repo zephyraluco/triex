@@ -108,12 +108,26 @@
     background-color: transparent;
   }
 
-  html:has(body.launcher-body) {
+  html:has(body.launcher-body),
+  html:has(body.settings-child-body) {
     background-color: rgb(255 255 255 / 0.72);
   }
 
-  html.dark:has(body.launcher-body) {
+  html.dark:has(body.launcher-body),
+  html.dark:has(body.settings-child-body) {
     background-color: rgb(24 24 27 / 0.78);
+  }
+
+  html:has(body.settings-child-body),
+  body.settings-child-body,
+  body.settings-child-body #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body.settings-child-body,
+  body.settings-child-body #root {
+    background-color: transparent;
   }
 }
 

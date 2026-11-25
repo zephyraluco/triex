@@ -1,143 +1,129 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import type { ThemeMode, VibrancyMode } from "@/lib/ipc";
 import { useSettingsStore } from "@/stores/useSettingsStore";
+import { ContentSection, notifyStatus } from "./SettingsPrimitives";
 
 export function GeneralSettings() {
   const settings = useSettingsStore((s) => s.settings);
   const patchSettings = useSettingsStore((s) => s.patchSettings);
   const isSaving = useSettingsStore((s) => s.isSaving);
+  const [hotkeyDraft, setHotkeyDraft] = useState("");
+  const [maxResultsDraft, setMaxResultsDraft] = useState("30");
+  useEffect(() => {
+    if (settings) {
+      setHotkeyDraft(settings.hotkey);
+      setMaxResultsDraft(String(settings.maxResults));
+    }
+  }, [settings]);
 
-  const [hotkeyDraft, setHotkeyDraft] = useState(settings?.hotkey ?? "Alt+Space");
+  const handleSaveGeneral = async () => {
+    if (!settings) return;
+    const parsedMax = Number(maxResultsDraft);
+    const maxResults =
+      Number.isFinite(parsedMax) && parsedMax >= 5 && parsedMax <= 100
+        ? Math.round(parsedMax)
+        : settings.maxResults;
+    const saved = await patchSettings({
+      hotkey: hotkeyDraft.trim() || settings.hotkey,
+      maxResults,
+    });
+    if (saved) notifyStatus("设置已保存");
+  };
 
   if (!settings) return null;
+  return (<ContentSection
+              title="常规"
+              description="管理全局呼出快捷键、启动行为与搜索展示数量。"
+            >
+              <div className="max-w-lg space-y-5">
+                <div className="space-y-2">
+                  <Label htmlFor="hotkey" className="text-[13px]">
+                    呼出快捷键
+                  </Label>
+                  <Input
+                    id="hotkey"
+                    value={hotkeyDraft}
+                    onChange={(e) => setHotkeyDraft(e.target.value)}
+                    placeholder="Alt+Space"
+                    className="w-56 rounded-lg border-border/80 bg-surface font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    用于随时在任意应用上方唤起或隐藏 Triex（例如 Alt+Space、Ctrl+Space）。
+                  </p>
+                </div>
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
-        <div>
-          <div className="text-sm font-medium">全局呼出快捷键</div>
-          <div className="text-xs text-muted-foreground">
-            例如 Alt+Space、Ctrl+Space、Alt+Q
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Input
-            value={hotkeyDraft}
-            onChange={(e) => setHotkeyDraft(e.target.value)}
-            className="w-36 font-mono text-xs"
-          />
-          <Button
-            size="sm"
-            disabled={isSaving || hotkeyDraft.trim() === settings.hotkey}
-            onClick={() => void patchSettings({ hotkey: hotkeyDraft.trim() })}
-          >
-            应用
-          </Button>
-        </div>
-      </div>
+                <div className="space-y-2">
+                  <Label htmlFor="max-results" className="text-[13px]">
+                    最大搜索返回条数
+                  </Label>
+                  <Input
+                    id="max-results"
+                    type="number"
+                    min={5}
+                    max={100}
+                    value={maxResultsDraft}
+                    onChange={(e) => setMaxResultsDraft(e.target.value)}
+                    className="w-32 rounded-lg border-border/80 bg-surface"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    每次模糊匹配最多展示的结果数量（范围 5 ~ 100）。
+                  </p>
+                </div>
 
-      <div className="space-y-3 rounded-lg border border-border p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">开机自动启动</div>
-            <div className="text-xs text-muted-foreground">
-              登录 Windows 时自动静默驻留系统托盘
-            </div>
-          </div>
-          <Switch
-            checked={settings.launchOnStartup}
-            onCheckedChange={(checked) => void patchSettings({ launchOnStartup: checked })}
-          />
-        </div>
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between rounded-xl border border-border/70 bg-surface px-4 py-3">
+                    <div className="space-y-0.5 pr-4">
+                      <Label htmlFor="autostart" className="text-[13px] font-medium">
+                        开机自动启动
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        登录 Windows 时自动静默驻留系统托盘。
+                      </p>
+                    </div>
+                    <Switch
+                      id="autostart"
+                      checked={settings.launchOnStartup}
+                      onCheckedChange={(checked) =>
+                        void patchSettings({ launchOnStartup: checked })
+                      }
+                    />
+                  </div>
 
-        <div className="h-px bg-border" />
+                  <div className="flex items-center justify-between rounded-xl border border-border/70 bg-surface px-4 py-3">
+                    <div className="space-y-0.5 pr-4">
+                      <Label htmlFor="hide-blur" className="text-[13px] font-medium">
+                        失焦自动隐藏
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        点击启动器外部区域时自动隐藏搜索窗口。
+                      </p>
+                    </div>
+                    <Switch
+                      id="hide-blur"
+                      checked={settings.hideOnBlur}
+                      onCheckedChange={(checked) =>
+                        void patchSettings({ hideOnBlur: checked })
+                      }
+                    />
+                  </div>
+                </div>
 
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">失焦自动隐藏</div>
-            <div className="text-xs text-muted-foreground">
-              点击启动器外部区域时自动隐藏搜索框
-            </div>
-          </div>
-          <Switch
-            checked={settings.hideOnBlur}
-            onCheckedChange={(checked) => void patchSettings({ hideOnBlur: checked })}
-          />
-        </div>
-      </div>
-
-      <div className="space-y-4 rounded-lg border border-border p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">外观主题</div>
-            <div className="text-xs text-muted-foreground">
-              跟随系统或固定浅色 / 深色模式
-            </div>
-          </div>
-          <div className="flex gap-1.5">
-            {(["system", "light", "dark"] as ThemeMode[]).map((mode) => (
-              <Button
-                key={mode}
-                size="sm"
-                variant={settings.theme === mode ? "default" : "outline"}
-                onClick={() => void patchSettings({ theme: mode })}
-              >
-                {mode === "system" ? "跟随系统" : mode === "light" ? "浅色" : "深色"}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <div className="h-px bg-border" />
-
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">窗口材质（Windows 11）</div>
-            <div className="text-xs text-muted-foreground">
-              Mica 云母、Acrylic 亚克力或纯色背景
-            </div>
-          </div>
-          <div className="flex gap-1.5">
-            {(["mica", "acrylic", "none"] as VibrancyMode[]).map((mode) => (
-              <Button
-                key={mode}
-                size="sm"
-                variant={settings.vibrancy === mode ? "default" : "outline"}
-                onClick={() => void patchSettings({ vibrancy: mode })}
-              >
-                {mode === "mica" ? "Mica" : mode === "acrylic" ? "Acrylic" : "关闭"}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <div className="h-px bg-border" />
-
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">最大搜索返回条数</div>
-            <div className="text-xs text-muted-foreground">
-              Rust 后端 Top-K 截断数量（建议 20~50）
-            </div>
-          </div>
-          <Input
-            type="number"
-            min={5}
-            max={100}
-            value={settings.maxResults}
-            onChange={(e) => {
-              const num = Number(e.target.value);
-              if (Number.isFinite(num) && num >= 5 && num <= 100) {
-                void patchSettings({ maxResults: num });
-              }
-            }}
-            className="w-24 text-right"
-          />
-        </div>
-      </div>
-    </div>
-  );
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-9 rounded-lg px-4"
+                  disabled={
+                    isSaving ||
+                    (hotkeyDraft.trim() === settings.hotkey &&
+                      maxResultsDraft === String(settings.maxResults))
+                  }
+                  onClick={() => void handleSaveGeneral()}
+                >
+                  更新偏好设置
+                </Button>
+              </div>
+            </ContentSection>);
 }

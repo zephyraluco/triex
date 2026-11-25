@@ -1,9 +1,9 @@
-use tauri::{PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{LogicalPosition, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Window};
 
 use crate::config::{ThemeMode, VibrancyMode};
 
 /// Applies Windows 11 native DWM rounded corners and Mica / Acrylic vibrancy to the launcher window.
-pub fn apply_window_vibrancy(window: &WebviewWindow, mode: VibrancyMode, theme: ThemeMode) {
+pub fn apply_window_vibrancy(window: &Window, mode: VibrancyMode, theme: ThemeMode) {
     #[cfg(target_os = "windows")]
     {
         use window_vibrancy::{apply_acrylic, apply_mica, clear_acrylic, clear_mica};
@@ -13,25 +13,29 @@ pub fn apply_window_vibrancy(window: &WebviewWindow, mode: VibrancyMode, theme: 
         let _ = clear_mica(window);
         let _ = clear_acrylic(window);
 
-        let dark_hint = match theme {
-            ThemeMode::Dark => Some(true),
-            ThemeMode::Light => Some(false),
-            ThemeMode::System => None,
+        // `None` leaves DWMWA_USE_IMMERSIVE_DARK_MODE unchanged in window-vibrancy
+        // 0.6. Resolve the OS preference explicitly to clear a previous forced theme.
+        // We never override Tauri's window theme, so theme() still tracks the OS.
+        let dark = match theme {
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => matches!(window.theme(), Ok(tauri::Theme::Dark)),
+        };
+        let tint = if dark {
+            (24, 24, 27, 215)
+        } else {
+            (248, 248, 250, 215)
         };
 
         match mode {
             VibrancyMode::Mica => {
-                if apply_mica(window, dark_hint).is_err() {
+                if apply_mica(window, Some(dark)).is_err() {
                     // Fallback to acrylic on Windows 10 where Mica is unavailable.
-                    let _ = apply_acrylic(window, Some((24, 24, 27, 210)));
+                    let _ = apply_acrylic(window, Some(tint));
                 }
             }
             VibrancyMode::Acrylic => {
-                let tint = match theme {
-                    ThemeMode::Light => Some((248, 248, 250, 215)),
-                    _ => Some((24, 24, 27, 215)),
-                };
-                let _ = apply_acrylic(window, tint);
+                let _ = apply_acrylic(window, Some(tint));
             }
             VibrancyMode::None => {}
         }
@@ -46,7 +50,7 @@ pub fn apply_window_vibrancy(window: &WebviewWindow, mode: VibrancyMode, theme: 
 /// Explicitly enables Windows 11 DWM native rounded corners (`DWMWCP_ROUND`) so
 /// borderless transparent windows have crisp hardware-antialiased corners without CSS double-rounding.
 #[cfg(target_os = "windows")]
-fn apply_win11_rounded_corners(window: &WebviewWindow) {
+fn apply_win11_rounded_corners(window: &Window) {
     use std::ffi::c_void;
     use windows::Win32::Foundation::HWND;
     use windows::Win32::Graphics::Dwm::{
@@ -103,7 +107,7 @@ pub fn restore_foreground_hwnd(_hwnd_raw: isize) {}
 /// Positions the launcher horizontally centered and near the upper third of the monitor
 /// currently containing the mouse cursor.
 #[cfg(windows)]
-pub fn position_on_cursor_monitor(window: &WebviewWindow) {
+pub fn position_on_cursor_monitor(window: &Window) {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -142,13 +146,50 @@ pub fn position_on_cursor_monitor(window: &WebviewWindow) {
 }
 
 #[cfg(not(windows))]
-pub fn position_on_cursor_monitor(window: &WebviewWindow) {
+pub fn position_on_cursor_monitor(window: &Window) {
     let _ = window.center();
+}
+
+/// Returns true if the OS foreground window is this top-level window or any of its child HWNDs
+/// (such as embedded child WebView2 controls).
+#[cfg(windows)]
+pub fn is_window_or_child_foreground(window: &Window) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetForegroundWindow, GA_ROOT};
+
+    let Ok(raw_hwnd) = window.hwnd() else {
+        return false;
+    };
+    let win_hwnd = HWND(raw_hwnd.0);
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return false;
+        }
+        if fg == win_hwnd {
+            return true;
+        }
+        GetAncestor(fg, GA_ROOT) == win_hwnd
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_window_or_child_foreground(window: &Window) -> bool {
+    window.is_focused().unwrap_or(false)
+}
+
+/// Synchronizes the primary shell webview (`main`) bounds inside the top-level window
+/// so it never overlaps any mounted child webview.
+pub fn set_shell_webview_bounds(app: &tauri::AppHandle, logical_width: f64, logical_height: f64) {
+    if let Some(shell_wv) = app.get_webview("main") {
+        let _ = shell_wv.set_position(LogicalPosition::new(0.0, 0.0));
+        let _ = shell_wv.set_size(LogicalSize::new(logical_width, logical_height));
+    }
 }
 
 /// Resizes the launcher window height in logical pixels while locking its top-left position
 /// and skipping redundant OS resize calls to eliminate resize drift and flicker.
-pub fn set_logical_height(window: &WebviewWindow, logical_width: f64, logical_height: f64) {
+pub fn set_logical_height(window: &Window, logical_width: f64, logical_height: f64) {
     let scale = window.scale_factor().unwrap_or(1.0);
     let target_w = (logical_width * scale).round() as u32;
     let target_h = (logical_height * scale).round() as u32;

@@ -11,23 +11,7 @@
   },
   "app": {
     "withGlobalTauri": false,
-    "windows": [
-      {
-        "label": "main",
-        "title": "Triex",
-        "url": "index.html",
-        "width": 800,
-        "height": 64,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "shadow": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "center": true,
-        "visible": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

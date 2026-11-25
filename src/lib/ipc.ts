@@ -26,11 +26,6 @@ export interface IndexStatus {
   totalIndexed: number;
 }
 
-export interface ClipboardSnapshot {
-  kind: "url" | "json" | "text" | string;
-  preview: string;
-}
-
 export interface AppSettings {
   hotkey: string;
   theme: ThemeMode;
@@ -112,8 +107,8 @@ export const ipc = {
     return invoke("show_brand_context_menu");
   },
 
-  setSettingsViewOpen(open: boolean): Promise<void> {
-    return invoke("set_settings_view_open", { open });
+  readClipboardText(): Promise<string | null> {
+    return invoke("read_clipboard_text");
   },
 
   resizeWindow(height: number): Promise<void> {
@@ -126,10 +121,6 @@ export const ipc = {
 
   completeHide(epoch: number): Promise<void> {
     return invoke("complete_hide", { epoch });
-  },
-
-  getClipboardSnapshot(): Promise<ClipboardSnapshot | null> {
-    return invoke("get_clipboard_snapshot");
   },
 
   listPlugins(): Promise<InstalledPluginRecord[]> {
@@ -156,11 +147,19 @@ export const ipc = {
     return invoke("get_settings");
   },
 
-  updateSettings(newSettings: AppSettings): Promise<AppSettings> {
-    return invoke("update_settings", { newSettings });
+  updateSettings(patch: Partial<Omit<AppSettings, "pinnedItems">>): Promise<AppSettings> {
+    return invoke("update_settings", { patch });
   },
 
   openSettings(): Promise<void> {
     return invoke("open_settings");
+  },
+
+  closeSettings(): Promise<void> {
+    return invoke("close_settings");
+  },
+
+  toggleSettings(): Promise<void> {
+    return invoke("toggle_settings");
   },
 };

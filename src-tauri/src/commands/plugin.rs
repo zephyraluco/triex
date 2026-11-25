@@ -2,14 +2,21 @@ use tauri::{AppHandle, Emitter, Manager, State, Webview};
 
 use crate::error::{AppError, AppResult};
 use crate::plugins::manager::{
-    close_active_plugin, detach_active_plugin, open_plugin, ActivePluginSession,
+    close_active_plugin, detach_active_plugin, evict_plugin_webview, open_plugin,
+    ActivePluginSession,
 };
-use crate::plugins::permission::{plugin_id_from_label, require_permission};
+use crate::plugins::permission::{
+    plugin_id_from_label, require_host_webview, require_permission,
+};
 use crate::state::AppState;
 use crate::storage::plugin_repo::{InstalledPluginRecord, PluginKvEntry};
 
 #[tauri::command]
-pub fn list_plugins(state: State<'_, AppState>) -> AppResult<Vec<InstalledPluginRecord>> {
+pub fn list_plugins(
+    webview: Webview,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<InstalledPluginRecord>> {
+    require_host_webview(&webview)?;
     state.db.list_plugins()
 }
 
@@ -17,10 +24,21 @@ pub fn list_plugins(state: State<'_, AppState>) -> AppResult<Vec<InstalledPlugin
 pub fn set_plugin_enabled(
     plugin_id: String,
     enabled: bool,
+    webview: Webview,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
+    require_host_webview(&webview)?;
     state.db.set_plugin_enabled(&plugin_id, enabled)?;
+    if !enabled {
+        let is_active = state
+            .active_plugin()
+            .is_some_and(|session| session.plugin_id == plugin_id);
+        if is_active {
+            close_active_plugin(&app)?;
+        }
+        evict_plugin_webview(&app, &plugin_id);
+    }
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let _ = crate::commands::search::trigger_rebuild_index(&handle).await;
@@ -29,47 +47,63 @@ pub fn set_plugin_enabled(
 }
 
 #[tauri::command]
-pub fn open_plugin_command(
+pub async fn open_plugin_command(
     plugin_id: String,
     feature_code: String,
+    webview: Webview,
     app: AppHandle,
 ) -> AppResult<ActivePluginSession> {
+    require_host_webview(&webview)?;
     open_plugin(&app, &plugin_id, &feature_code)
 }
 
 #[tauri::command]
-pub fn close_plugin_command(app: AppHandle) -> AppResult<()> {
+pub fn close_plugin_command(webview: Webview, app: AppHandle) -> AppResult<()> {
+    require_host_webview(&webview)?;
     close_active_plugin(&app)
 }
 
 #[tauri::command]
-pub fn detach_plugin_command(app: AppHandle) -> AppResult<()> {
+pub async fn detach_plugin_command(webview: Webview, app: AppHandle) -> AppResult<()> {
+    require_host_webview(&webview)?;
     detach_active_plugin(&app)
 }
 
 #[tauri::command]
 pub fn set_plugin_sub_input(
     placeholder: String,
+    webview: Webview,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    if let Ok(mut guard) = state.active_plugin.lock()
-        && let Some(session) = guard.as_mut()
-    {
-        session.sub_input_placeholder = placeholder.clone();
+    let plugin_id = plugin_id_from_label(webview.label())?;
+    let plugins = state.db.list_plugins()?;
+    if !plugins.iter().any(|plugin| plugin.id == plugin_id && plugin.enabled) {
+        return Err(AppError::PermissionDenied("Plugin is disabled".into()));
     }
+    let mut guard = state.content_mode.lock()
+        .map_err(|_| AppError::Platform("Plugin lock poisoned".into()))?;
+    let crate::state::ContentMode::Plugin(session) = &mut *guard else {
+        return Err(AppError::PermissionDenied("No active plugin session".into()));
+    };
+    if session.webview_label != webview.label() {
+        return Err(AppError::PermissionDenied("Caller does not own the active session".into()));
+    }
+    session.sub_input_placeholder = placeholder.clone();
+    drop(guard);
     let _ = app.emit("triex://sub-input-placeholder", placeholder);
     Ok(())
 }
 
 #[tauri::command]
-pub fn forward_sub_input_value(value: String, app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
-    let label = state
-        .active_plugin
-        .lock()
-        .map_err(|_| AppError::Platform("Plugin lock poisoned".to_string()))?
-        .as_ref()
-        .map(|s| s.webview_label.clone());
+pub fn forward_sub_input_value(
+    value: String,
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    require_host_webview(&webview)?;
+    let label = state.active_plugin().map(|s| s.webview_label);
 
     if let Some(label) = label
         && let Some(wv) = app.get_webview(&label)

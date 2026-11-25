@@ -1,12 +1,12 @@
 import { useRef } from "react";
 import { Command } from "@/components/ui/command";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { SearchHeader } from "@/components/launcher/SearchHeader";
 import { ResultList } from "@/components/launcher/ResultList";
-import { EmbeddedSettings } from "@/components/launcher/EmbeddedSettings";
+import { useLauncherEvents } from "@/hooks/useLauncherEvents";
 import { useSearch } from "@/hooks/useSearch";
 import { useWindowAutoResize } from "@/hooks/useWindowAutoResize";
 import { useLauncherShortcuts } from "@/hooks/useLauncherShortcuts";
+import { useNativeContextMenu } from "@/hooks/useNativeContextMenu";
 import { useThemeSync } from "@/hooks/useThemeSync";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
@@ -20,32 +20,28 @@ export default function App() {
   const settingsOpen = useLauncherStore((s) => s.settingsOpen);
 
   useThemeSync();
+  useNativeContextMenu();
   useSearch();
   useWindowAutoResize(containerRef);
-  useLauncherShortcuts(inputRef);
+  useLauncherShortcuts();
+  useLauncherEvents(inputRef);
 
   return (
-    <TooltipProvider delayDuration={350}>
-      <div
-        ref={containerRef}
-        className="flex w-full flex-col overflow-clip text-foreground"
+    <div
+      ref={containerRef}
+      className="flex w-full flex-col overflow-clip text-foreground"
+    >
+      <Command
+        shouldFilter={false}
+        loop
+        value={selectedId}
+        onValueChange={setSelectedId}
+        className="h-auto overflow-clip rounded-none bg-transparent text-foreground"
       >
-        <Command
-          shouldFilter={false}
-          loop
-          value={selectedId}
-          onValueChange={setSelectedId}
-          className="h-auto overflow-clip rounded-none bg-transparent text-foreground"
-        >
-          <SearchHeader inputRef={inputRef} />
+        <SearchHeader inputRef={inputRef} />
 
-          {settingsOpen ? (
-            <EmbeddedSettings />
-          ) : (
-            !activePlugin && <ResultList />
-          )}
-        </Command>
-      </div>
-    </TooltipProvider>
+        {!settingsOpen && !activePlugin && <ResultList />}
+      </Command>
+    </div>
   );
 }

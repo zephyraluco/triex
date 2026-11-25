@@ -11,10 +11,10 @@ use crate::search::index::{ItemKind, RawSearchItem};
 use crate::storage::plugin_repo::InstalledPluginRecord;
 
 /// Performs a full scan across Win32 shortcuts, UWP apps, built-in system commands, and enabled plugins.
+/// Icon extraction is intentionally decoupled into [`warm_missing_icons`] so index swaps are never blocked.
 pub fn scan_all_items(
     custom_dirs: &[String],
     plugins: &[InstalledPluginRecord],
-    paths: &AppPaths,
 ) -> Vec<RawSearchItem> {
     let mut items = Vec::new();
     let mut seen_names = HashSet::new();
@@ -55,8 +55,14 @@ pub fn scan_all_items(
         }
     }
 
-    // Warm up icon cache for newly discovered apps in the background of this scan worker.
-    for item in &items {
+    items
+}
+
+/// Extracts and caches missing 64x64 PNG icons for scanned items on a background worker thread.
+/// Returns the number of newly cached icon files.
+pub fn warm_missing_icons(items: &[RawSearchItem], paths: &AppPaths) -> usize {
+    let mut extracted = 0usize;
+    for item in items {
         if item.icon_key.is_empty() {
             continue;
         }
@@ -69,8 +75,9 @@ pub fn scan_all_items(
             ItemKind::UwpApp => format!("shell:AppsFolder\\{}", item.exec_path),
             _ => continue,
         };
-        let _ = ensure_icon_cached(&source, &icon_file);
+        if ensure_icon_cached(&source, &icon_file).is_ok() {
+            extracted += 1;
+        }
     }
-
-    items
+    extracted
 }

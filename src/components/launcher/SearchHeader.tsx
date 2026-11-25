@@ -8,7 +8,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Command as CommandPrimitive } from "cmdk";
 import {
   ArrowLeft,
-  Clipboard,
   ExternalLink,
   FileText,
   Image as ImageIcon,
@@ -18,11 +17,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { ipc } from "@/lib/ipc";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
@@ -90,27 +84,21 @@ function TriexBrandBadge() {
   const toggleSettings = useLauncherStore((s) => s.toggleSettings);
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          size="icon"
-          variant="default"
-          onClick={toggleSettings}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            void ipc.showBrandContextMenu();
-          }}
-          className="size-9 shrink-0 rounded-xl shadow-xs"
-        >
-          <TriexLogoGlyph className="size-5" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {settingsOpen ? "返回搜索（右键打开菜单）" : "打开设置（右键打开菜单）"}
-      </TooltipContent>
-    </Tooltip>
+    <Button
+      type="button"
+      size="icon"
+      variant="default"
+      onClick={toggleSettings}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void ipc.showBrandContextMenu();
+      }}
+      aria-label={settingsOpen ? "返回搜索" : "打开设置"}
+      className="size-9 shrink-0 rounded-xl shadow-xs"
+    >
+      <TriexLogoGlyph className="size-5" />
+    </Button>
   );
 }
 
@@ -123,8 +111,6 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
   const closeSettings = useLauncherStore((s) => s.closeSettings);
   const activePlugin = useLauncherStore((s) => s.activePlugin);
   const setActivePlugin = useLauncherStore((s) => s.setActivePlugin);
-  const clipboard = useLauncherStore((s) => s.clipboard);
-  const setClipboard = useLauncherStore((s) => s.setClipboard);
   const attachment = useLauncherStore((s) => s.attachment);
   const setAttachment = useLauncherStore((s) => s.setAttachment);
   const statusMessage = useLauncherStore((s) => s.statusMessage);
@@ -195,62 +181,56 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
 
   if (settingsOpen) {
     return (
-      <div className="border-b border-border/70">
-        <div
-          onMouseDown={handleHeaderMouseDown}
-          className="flex h-16 shrink-0 items-center justify-between px-4"
-        >
-          <div className="flex items-center gap-2.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                closeSettings();
-                requestAnimationFrame(() => inputRef.current?.focus());
-              }}
-              className="h-8 gap-1.5 rounded-lg border border-border/70 bg-surface px-2.5 text-xs font-medium text-foreground hover:bg-surface-hover"
+      <div
+        onMouseDown={handleHeaderMouseDown}
+        className="flex h-16 shrink-0 items-center justify-between border-b border-border/70 px-4"
+      >
+        <div className="flex items-center gap-2.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              closeSettings();
+              requestAnimationFrame(() => inputRef.current?.focus());
+            }}
+            className="h-8 gap-1.5 rounded-lg border border-border/70 bg-surface px-2.5 text-xs font-medium text-foreground hover:bg-surface-hover"
+          >
+            <ArrowLeft className="size-3.5" />
+            <span>返回搜索</span>
+          </Button>
+
+          <Separator orientation="vertical" className="h-4 bg-border/80" />
+
+          <span className="text-[15px] font-semibold tracking-tight text-foreground">
+            偏好设置
+          </span>
+        </div>
+
+        <div className="h-full flex-1" />
+
+        <div className="flex items-center gap-1.5">
+          {statusMessage && (
+            <Badge
+              variant="secondary"
+              className="mr-1 rounded-lg border border-border/70 bg-surface font-normal text-foreground/90"
             >
-              <ArrowLeft className="size-3.5" />
-              <span>返回搜索</span>
-            </Button>
+              {statusMessage}
+            </Badge>
+          )}
 
-            <Separator orientation="vertical" className="h-4 bg-border/80" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => void ipc.showBrandContextMenu()}
+            aria-label="更多操作"
+            className="size-8 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+          >
+            <MoreVertical className="size-4" />
+          </Button>
 
-            <span className="text-[15px] font-semibold tracking-tight text-foreground">
-              偏好设置
-            </span>
-          </div>
-
-          <div className="h-full flex-1" />
-
-          <div className="flex items-center gap-1.5">
-            {statusMessage && (
-              <Badge
-                variant="secondary"
-                className="mr-1 rounded-lg border border-border/70 bg-surface font-normal text-foreground/90"
-              >
-                {statusMessage}
-              </Badge>
-            )}
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => void ipc.showBrandContextMenu()}
-                  className="size-8 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-                >
-                  <MoreVertical className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">更多操作</TooltipContent>
-            </Tooltip>
-
-            <TriexBrandBadge />
-          </div>
+          <TriexBrandBadge />
         </div>
       </div>
     );
@@ -284,20 +264,16 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             className="h-11 flex-1 bg-transparent text-[20px] font-normal text-foreground outline-none placeholder:text-muted-foreground"
           />
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={handleDetachPlugin}
-                className="size-8 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-              >
-                <ExternalLink className="size-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">分离为独立窗口</TooltipContent>
-          </Tooltip>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={handleDetachPlugin}
+            aria-label="分离为独立窗口"
+            className="size-8 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+          >
+            <ExternalLink className="size-4" />
+          </Button>
 
           <TriexBrandBadge />
         </>
@@ -354,40 +330,6 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             >
               {statusMessage}
             </Badge>
-          )}
-
-          {clipboard && query.length === 0 && !attachment && !statusMessage && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant="secondary"
-                  onClick={() =>
-                    setAttachment({
-                      kind: "text",
-                      label: clipboard.preview.slice(0, 22),
-                      rawText: clipboard.preview,
-                    })
-                  }
-                  className="h-7 max-w-[170px] shrink-0 cursor-pointer gap-1.5 rounded-lg border border-border/70 bg-surface px-2.5 text-[11px] font-normal text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-                >
-                  <Clipboard className="size-3 shrink-0" />
-                  <span className="truncate">{clipboard.preview}</span>
-                  <span
-                    role="button"
-                    tabIndex={-1}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setClipboard(null);
-                    }}
-                    className="text-muted-foreground/70 hover:text-foreground"
-                    aria-label="清除剪贴板提示"
-                  >
-                    <X className="size-3" />
-                  </span>
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">点击载入当前剪贴板内容</TooltipContent>
-            </Tooltip>
           )}
 
           {query.length > 0 && (

@@ -3,6 +3,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::AppHandle;
 
 use crate::commands::launcher::{show_main_launcher, toggle_main_launcher};
+use crate::commands::search::trigger_rebuild_index;
 use crate::commands::settings::open_settings_window;
 use crate::error::AppResult;
 
@@ -22,12 +23,15 @@ pub fn setup_tray(app: &AppHandle) -> AppResult<()> {
                 let _ = show_main_launcher(app);
             }
             "settings" => {
-                let _ = open_settings_window(app);
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = open_settings_window(&handle);
+                });
             }
             "rebuild" => {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = crate::commands::search::trigger_rebuild_index(&handle).await;
+                    let _ = trigger_rebuild_index(&handle).await;
                 });
             }
             "quit" => {

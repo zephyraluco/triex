@@ -1,85 +1,177 @@
-use tauri::{AppHandle, Emitter, Manager, State};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, Webview, WebviewBuilder,
+    WebviewUrl,
+};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-use crate::commands::launcher::{show_main_launcher, toggle_main_launcher};
-use crate::config::AppSettings;
+use crate::commands::launcher::{
+    show_main_launcher, toggle_main_launcher, HEADER_LOGICAL_HEIGHT, LAUNCHER_LOGICAL_WIDTH,
+};
+use crate::commands::search::{refresh_directory_watcher, trigger_rebuild_index};
+use crate::config::{AppSettings, SettingsPatch};
 use crate::error::{AppError, AppResult};
-use crate::platform::window::apply_window_vibrancy;
+use crate::platform::window::{
+    apply_window_vibrancy, set_logical_height, set_shell_webview_bounds,
+};
+use crate::plugins::{manager::close_active_plugin, permission::require_host_webview};
 use crate::state::AppState;
 
+const SETTINGS_VIEW_HEIGHT: f64 = 516.0;
+static SETTINGS_VIEW_SEQ: AtomicU64 = AtomicU64::new(1);
+
 #[tauri::command]
-pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
-    state.current_settings()
+pub fn get_settings(webview: Webview, state: State<'_, AppState>) -> AppResult<AppSettings> {
+    require_host_webview(&webview)?;
+    Ok(state.current_settings())
 }
 
 #[tauri::command]
 pub async fn update_settings(
-    new_settings: AppSettings,
+    patch: SettingsPatch,
+    webview: Webview,
     app: AppHandle,
 ) -> AppResult<AppSettings> {
-    let state = app.state::<AppState>();
-    let old_settings = state.current_settings();
-
-    if new_settings.hotkey != old_settings.hotkey {
-        register_launcher_hotkey(&app, &new_settings.hotkey)?;
-    }
-
-    if new_settings.launch_on_startup != old_settings.launch_on_startup {
-        let autostart = app.autolaunch();
-        let _ = if new_settings.launch_on_startup {
-            autostart.enable()
-        } else {
-            autostart.disable()
-        };
-    }
-
-    if (new_settings.vibrancy != old_settings.vibrancy || new_settings.theme != old_settings.theme)
-        && let Some(main_win) = app.get_webview_window("main")
-    {
-        apply_window_vibrancy(&main_win, new_settings.vibrancy, new_settings.theme);
-    }
-
-    state.db.save_settings(&new_settings)?;
-    if let Ok(mut guard) = state.settings.write() {
-        *guard = new_settings.clone();
-    }
-
-    let needs_reindex = new_settings.custom_scan_dirs != old_settings.custom_scan_dirs
-        || new_settings.excluded_apps != old_settings.excluded_apps;
-    if needs_reindex {
-        let handle = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let _ = crate::commands::search::trigger_rebuild_index(&handle).await;
-        });
-    }
-
-    let _ = app.emit("triex://settings-updated", &new_settings);
-    Ok(new_settings)
+    require_host_webview(&webview)?;
+    apply_settings_change(&app, |settings| patch.apply(settings))
 }
 
 #[tauri::command]
-pub fn open_settings(app: AppHandle) -> AppResult<()> {
+pub async fn open_settings(webview: Webview, app: AppHandle) -> AppResult<()> {
+    require_host_webview(&webview)?;
     open_settings_window(&app)
 }
 
-/// Shows the main launcher window and switches it into the embedded ZTools-style Settings view.
-pub fn open_settings_window(app: &AppHandle) -> AppResult<()> {
-    show_main_launcher(app)?;
-    let _ = app.emit("triex://open-settings", ());
+#[tauri::command]
+pub async fn close_settings(webview: Webview, app: AppHandle) -> AppResult<()> {
+    require_host_webview(&webview)?;
+    close_settings_view(&app);
     Ok(())
 }
 
-/// Unregisters previous global shortcuts and registers the configured launcher toggle hotkey.
+#[tauri::command]
+pub async fn toggle_settings(webview: Webview, app: AppHandle) -> AppResult<()> {
+    require_host_webview(&webview)?;
+    if app.state::<AppState>().settings_open() {
+        close_settings_view(&app);
+        Ok(())
+    } else {
+        open_settings_window(&app)
+    }
+}
+
+pub fn toggle_pin(app: &AppHandle, item_id: String) -> AppResult<Vec<String>> {
+    Ok(apply_settings_change(app, |settings| {
+        if let Some(pos) = settings.pinned_items.iter().position(|id| id == &item_id) {
+            settings.pinned_items.remove(pos);
+        } else {
+            settings.pinned_items.push(item_id);
+        }
+        Ok(())
+    })?
+    .pinned_items)
+}
+
+/// Serializes all settings writes (including pin changes) with rollback on hotkey/autostart failure.
+fn apply_settings_change(
+    app: &AppHandle,
+    mutate: impl FnOnce(&mut AppSettings) -> AppResult<()>,
+) -> AppResult<AppSettings> {
+    let state = app.state::<AppState>();
+    let _serial = state
+        .settings_update
+        .lock()
+        .map_err(|_| AppError::Platform("Settings update lock poisoned".into()))?;
+    let mut current = state
+        .settings
+        .write()
+        .map_err(|_| AppError::Platform("Settings lock poisoned".into()))?;
+    let old = current.clone();
+    let mut next = old.clone();
+    mutate(&mut next)?;
+
+    let hotkey_changed = next.hotkey != old.hotkey;
+    let startup_changed = next.launch_on_startup != old.launch_on_startup;
+
+    // Register the replacement before removing the working shortcut.
+    if hotkey_changed {
+        register_launcher_hotkey(app, &next.hotkey)?;
+    }
+
+    let persist_res = (|| -> AppResult<()> {
+        if startup_changed {
+            let manager = app.autolaunch();
+            (if next.launch_on_startup {
+                manager.enable()
+            } else {
+                manager.disable()
+            })
+            .map_err(|err| AppError::Platform(format!("Cannot update autostart: {err}")))?;
+        }
+        state.db.save_settings(&next)
+    })();
+
+    if let Err(err) = persist_res {
+        if hotkey_changed {
+            let _ = app.global_shortcut().unregister(next.hotkey.as_str());
+        }
+        if startup_changed {
+            let manager = app.autolaunch();
+            let restored = if old.launch_on_startup {
+                manager.enable()
+            } else {
+                manager.disable()
+            };
+            if let Err(rollback) = restored {
+                return Err(AppError::Platform(format!(
+                    "{err}; autostart rollback failed: {rollback}"
+                )));
+            }
+        }
+        return Err(err);
+    }
+
+    *current = next.clone();
+    drop(current);
+
+    if hotkey_changed
+        && let Err(err) = app.global_shortcut().unregister(old.hotkey.as_str())
+    {
+        tracing::warn!("Failed to unregister previous shortcut: {err}");
+    }
+    if (next.theme != old.theme || next.vibrancy != old.vibrancy)
+        && let Some(window) = app.get_window("main")
+    {
+        apply_window_vibrancy(&window, next.vibrancy, next.theme);
+    }
+    if next.custom_scan_dirs != old.custom_scan_dirs
+        && let Err(err) = refresh_directory_watcher(app)
+    {
+        tracing::error!("Watcher refresh failed: {err}");
+    }
+    if next.custom_scan_dirs != old.custom_scan_dirs || next.excluded_apps != old.excluded_apps {
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(err) = trigger_rebuild_index(&handle).await {
+                tracing::error!("Settings index refresh failed: {err}");
+            }
+        });
+    }
+    if let Err(err) = app.emit("triex://settings-updated", &next) {
+        tracing::error!("Settings notification failed: {err}");
+    }
+    Ok(next)
+}
+
+/// Registers a shortcut without removing the currently working binding.
 pub fn register_launcher_hotkey(app: &AppHandle, hotkey: &str) -> AppResult<()> {
     let parsed: Shortcut = hotkey
         .parse()
         .map_err(|e| AppError::InvalidInput(format!("Invalid hotkey '{hotkey}': {e}")))?;
 
-    let manager = app.global_shortcut();
-    let _ = manager.unregister_all();
-
-    manager
+    app.global_shortcut()
         .on_shortcut(parsed, |app_handle, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 let _ = toggle_main_launcher(app_handle);
@@ -87,5 +179,90 @@ pub fn register_launcher_hotkey(app: &AppHandle, hotkey: &str) -> AppResult<()> 
         })
         .map_err(|e| AppError::Platform(format!("Failed to register hotkey '{hotkey}': {e}")))?;
 
+    Ok(())
+}
+
+/// Hides the settings child webview (keeping it alive for instant reopen)
+/// and notifies the main header to return to search mode.
+pub fn close_settings_view(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let was_open = state.set_settings_open(false);
+    let existing_label = state
+        .settings_webview_label
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+
+    if let Some(label) = existing_label
+        && let Some(wv) = app.get_webview(&label)
+    {
+        let _ = wv.hide();
+    }
+
+    if was_open {
+        if let Some(shell_wv) = app.get_webview("main") {
+            let _ = shell_wv.set_focus();
+        }
+        let _ = app.emit("triex://settings-closed", ());
+    }
+}
+
+/// Shows the main launcher window and mounts (or reveals the kept-alive) Settings child webview
+/// below the 64px header. Automatically hides any active plugin child webview first.
+pub fn open_settings_window(app: &AppHandle) -> AppResult<()> {
+    close_active_plugin(app)?;
+    show_main_launcher(app)?;
+
+    let state = app.state::<AppState>();
+    let main_window = app
+        .get_window("main")
+        .ok_or_else(|| AppError::Platform("Main window not available".to_string()))?;
+
+    let cached_wv = state
+        .settings_webview_label
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .and_then(|label| app.get_webview(&label));
+
+    if let Some(wv) = cached_wv {
+        let _ = wv.set_position(LogicalPosition::new(0.0, HEADER_LOGICAL_HEIGHT));
+        let _ = wv.set_size(LogicalSize::new(
+            LAUNCHER_LOGICAL_WIDTH,
+            SETTINGS_VIEW_HEIGHT,
+        ));
+        let _ = wv.show();
+        let _ = wv.set_focus();
+    } else {
+        let seq = SETTINGS_VIEW_SEQ.fetch_add(1, Ordering::Relaxed);
+        let label = format!("settings-view:{seq}");
+        let builder = WebviewBuilder::new(&label, WebviewUrl::App("settings.html".into()))
+            .transparent(true);
+
+        main_window
+            .add_child(
+                builder,
+                LogicalPosition::new(0.0, HEADER_LOGICAL_HEIGHT),
+                LogicalSize::new(LAUNCHER_LOGICAL_WIDTH, SETTINGS_VIEW_HEIGHT),
+            )
+            .map_err(|err| {
+                tracing::error!("Failed to add settings child webview '{label}': {err}");
+                AppError::Tauri(err)
+            })?;
+
+        if let Ok(mut guard) = state.settings_webview_label.lock() {
+            *guard = Some(label);
+        }
+    }
+
+    set_shell_webview_bounds(app, LAUNCHER_LOGICAL_WIDTH, HEADER_LOGICAL_HEIGHT);
+    set_logical_height(
+        &main_window,
+        LAUNCHER_LOGICAL_WIDTH,
+        HEADER_LOGICAL_HEIGHT + SETTINGS_VIEW_HEIGHT,
+    );
+
+    state.set_settings_open(true);
+    let _ = app.emit("triex://settings-opened", ());
     Ok(())
 }
