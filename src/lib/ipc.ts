@@ -33,6 +33,7 @@ export interface AppSettings {
   maxResults: number;
   launchOnStartup: boolean;
   hideOnBlur: boolean;
+  autoCheckUpdate: boolean;
   customScanDirs: string[];
   excludedApps: string[];
   pinnedItems: string[];
@@ -72,6 +73,18 @@ export interface ActivePluginSession {
   featureCode: string;
   webviewLabel: string;
   subInputPlaceholder: string;
+}
+
+export interface UpdateMetadata {
+  version: string;
+  currentVersion: string;
+  date: string | null;
+  body: string | null;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  contentLength: number | null;
 }
 
 export const ipc = {
@@ -165,5 +178,21 @@ export const ipc = {
 
   toggleSettings(): Promise<void> {
     return invoke("toggle_settings");
+  },
+
+  checkUpdate(): Promise<UpdateMetadata | null> {
+    return invoke("check_update");
+  },
+
+  getCachedUpdate(): Promise<UpdateMetadata | null> {
+    return invoke("get_cached_update");
+  },
+
+  installUpdate(): Promise<void> {
+    return invoke("install_update");
+  },
+
+  openDataDir(): Promise<void> {
+    return invoke("open_data_dir");
   },
 };

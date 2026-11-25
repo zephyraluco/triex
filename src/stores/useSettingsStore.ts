@@ -3,6 +3,7 @@ import {
   ipc,
   type AppSettings,
   type InstalledPluginRecord,
+  type UpdateMetadata,
 } from "@/lib/ipc";
 
 export type SettingsNavKey =
@@ -10,17 +11,20 @@ export type SettingsNavKey =
   | "appearance"
   | "index"
   | "plugins"
-  | "commands";
+  | "commands"
+  | "about";
 
 interface SettingsState {
   activeTab: SettingsNavKey;
   settings: AppSettings | null;
   plugins: InstalledPluginRecord[];
+  availableUpdate: UpdateMetadata | null;
   isLoading: boolean;
   isSaving: boolean;
   error: string | null;
 
   setActiveTab: (tab: SettingsNavKey) => void;
+  setAvailableUpdate: (update: UpdateMetadata | null) => void;
   loadAll: () => Promise<void>;
   patchSettings: (patch: Partial<Omit<AppSettings, "pinnedItems">>) => Promise<boolean>;
   togglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
@@ -33,20 +37,23 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   activeTab: "general",
   settings: null,
   plugins: [],
+  availableUpdate: null,
   isLoading: false,
   isSaving: false,
   error: null,
 
   setActiveTab: (activeTab) => set({ activeTab }),
+  setAvailableUpdate: (availableUpdate) => set({ availableUpdate }),
 
   loadAll: async () => {
     set({ isLoading: true, error: null });
     try {
-      const [settings, plugins] = await Promise.all([
+      const [settings, plugins, availableUpdate] = await Promise.all([
         ipc.getSettings(),
         ipc.listPlugins(),
+        ipc.getCachedUpdate().catch(() => null),
       ]);
-      set({ settings, plugins, isLoading: false });
+      set({ settings, plugins, availableUpdate, isLoading: false });
     } catch (err) {
       set({ error: String(err), isLoading: false });
     }

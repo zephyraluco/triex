@@ -4,3 +4,4 @@ pub mod menu;
 pub mod plugin;
 pub mod search;
 pub mod settings;
+pub mod updater;

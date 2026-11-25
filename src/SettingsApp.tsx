@@ -1,14 +1,17 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import {
   Blocks,
   FolderSearch,
+  Info,
   List,
   Palette,
   SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { CommandSettings } from "@/components/settings/CommandSettings";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
@@ -16,7 +19,7 @@ import { IndexSettings } from "@/components/settings/IndexSettings";
 import { PluginManager } from "@/components/settings/PluginManager";
 import { useNativeContextMenu } from "@/hooks/useNativeContextMenu";
 import { useThemeSync } from "@/hooks/useThemeSync";
-import { ipc, type AppSettings } from "@/lib/ipc";
+import { ipc, type AppSettings, type UpdateMetadata } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import { useSettingsStore, type SettingsNavKey } from "@/stores/useSettingsStore";
 
@@ -30,6 +33,7 @@ const NAV_ITEMS: Array<{
   { key: "index", label: "本地启动", Icon: FolderSearch },
   { key: "plugins", label: "已安装插件", Icon: Blocks },
   { key: "commands", label: "所有指令", Icon: List },
+  { key: "about", label: "关于与更新", Icon: Info },
 ];
 
 const PAGES = {
@@ -38,6 +42,7 @@ const PAGES = {
   index: IndexSettings,
   plugins: PluginManager,
   commands: CommandSettings,
+  about: AboutSettings,
 };
 
 export default function SettingsApp() {
@@ -47,22 +52,34 @@ export default function SettingsApp() {
   const activeTab = useSettingsStore((s) => s.activeTab);
   const setActiveTab = useSettingsStore((s) => s.setActiveTab);
   const settings = useSettingsStore((s) => s.settings);
+  const availableUpdate = useSettingsStore((s) => s.availableUpdate);
   const isLoading = useSettingsStore((s) => s.isLoading);
   const error = useSettingsStore((s) => s.error);
   const loadAll = useSettingsStore((s) => s.loadAll);
+  const [appVersion, setAppVersion] = useState("0.1.0");
   const SettingsPage = PAGES[activeTab];
 
   useEffect(() => {
+    void getVersion()
+      .then((ver) => setAppVersion(ver))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     let disposed = false;
-    const subscription = listen<AppSettings>("triex://settings-updated", ({ payload }) => {
+    const settingsSub = listen<AppSettings>("triex://settings-updated", ({ payload }) => {
       useSettingsStore.setState({ settings: payload });
     });
-    void subscription.then(() => {
+    const updateSub = listen<UpdateMetadata>("triex://update-available", ({ payload }) => {
+      useSettingsStore.setState({ availableUpdate: payload });
+    });
+    void Promise.all([settingsSub, updateSub]).then(() => {
       if (!disposed) void loadAll();
     });
     return () => {
       disposed = true;
-      void subscription.then((unlisten) => unlisten());
+      void settingsSub.then((unlisten) => unlisten());
+      void updateSub.then((unlisten) => unlisten());
     };
   }, [loadAll]);
 
@@ -97,14 +114,20 @@ export default function SettingsApp() {
                 )}
               >
                 <Icon className="size-4 shrink-0" />
-                <span>{label}</span>
+                <span className="flex-1 text-left">{label}</span>
+                {key === "about" && availableUpdate && (
+                  <span
+                    className="size-2 shrink-0 rounded-full bg-primary"
+                    title={`发现新版本 v${availableUpdate.version}`}
+                  />
+                )}
               </Button>
             );
           })}
         </nav>
 
         <div className="mt-auto px-2.5 pt-4 text-[11px] text-muted-foreground/80">
-          Triex v0.1.0
+          Triex v{appVersion}
         </div>
       </aside>
 

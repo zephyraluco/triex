@@ -20,6 +20,7 @@ use crate::commands::launcher::{hide_main_launcher, show_main_launcher};
 use crate::commands::menu::handle_context_menu_event;
 use crate::commands::search::{refresh_directory_watcher, trigger_rebuild_index};
 use crate::commands::settings::register_launcher_hotkey;
+use crate::commands::updater::check_for_update_inner;
 use crate::config::AppPaths;
 use crate::platform::window::{
     apply_window_vibrancy, is_window_or_child_foreground, position_on_cursor_monitor,
@@ -48,6 +49,7 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--silent"]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol("icon", |ctx, request| {
             handle_icon_protocol(ctx.app_handle(), request)
         })
@@ -165,6 +167,20 @@ pub fn run() {
 
             refresh_directory_watcher(app.handle())?;
 
+            // Silently check for updates 15 seconds after startup without interrupting search.
+            if settings.auto_check_update {
+                let update_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                    if !update_handle.state::<AppState>().current_settings().auto_check_update {
+                        return;
+                    }
+                    if let Err(err) = check_for_update_inner(&update_handle).await {
+                        tracing::debug!("Background update check skipped/failed: {err}");
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -198,6 +214,10 @@ pub fn run() {
             commands::settings::open_settings,
             commands::settings::close_settings,
             commands::settings::toggle_settings,
+            commands::updater::check_update,
+            commands::updater::get_cached_update,
+            commands::updater::install_update,
+            commands::updater::open_data_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running triex application");

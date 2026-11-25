@@ -171,6 +171,24 @@ pub fn evict_plugin_webview(app: &AppHandle, plugin_id: &str) {
     }
 }
 
+/// Closes all kept-alive plugin child webviews (used during graceful shutdown before update install).
+pub fn close_all_cached_plugin_webviews(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let _ = state.take_active_plugin();
+    let labels: Vec<String> = state
+        .cached_plugin_webviews
+        .lock()
+        .ok()
+        .map(|mut map| map.drain().map(|(_, entry)| entry.label).collect())
+        .unwrap_or_default();
+
+    for label in labels {
+        if let Some(wv) = app.get_webview(&label) {
+            let _ = wv.close();
+        }
+    }
+}
+
 /// Hides any currently embedded child plugin webview (keeping it warm for fast reopen,
 /// then automatically closing it after `PLUGIN_KEEP_ALIVE_SECS` of inactivity).
 pub fn close_active_plugin(app: &AppHandle) -> AppResult<()> {

@@ -4,6 +4,7 @@ use std::sync::{Mutex, RwLock};
 
 use notify::RecommendedWatcher;
 
+use crate::commands::updater::UpdateMetadata;
 use crate::config::{AppPaths, AppSettings};
 use crate::plugins::manager::ActivePluginSession;
 use crate::search::SearchEngine;
@@ -56,6 +57,8 @@ pub struct AppState {
     pub context_menu_actions: Mutex<HashMap<String, ContextMenuAction>>,
     pub cached_plugin_webviews: Mutex<HashMap<String, CachedPluginWebview>>,
     pub dir_watcher: Mutex<Option<RecommendedWatcher>>,
+    pub pending_update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
+    pub cached_update_meta: Mutex<Option<UpdateMetadata>>,
 }
 
 impl AppState {
@@ -77,6 +80,8 @@ impl AppState {
             context_menu_actions: Mutex::new(HashMap::new()),
             cached_plugin_webviews: Mutex::new(HashMap::new()),
             dir_watcher: Mutex::new(None),
+            pending_update: tokio::sync::Mutex::new(None),
+            cached_update_meta: Mutex::new(None),
         }
     }
 

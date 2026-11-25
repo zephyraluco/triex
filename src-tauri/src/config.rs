@@ -13,6 +13,7 @@ pub struct SettingsPatch {
     pub max_results: Option<usize>,
     pub launch_on_startup: Option<bool>,
     pub hide_on_blur: Option<bool>,
+    pub auto_check_update: Option<bool>,
     pub custom_scan_dirs: Option<Vec<String>>,
     pub excluded_apps: Option<Vec<String>>,
 }
@@ -30,10 +31,15 @@ impl SettingsPatch {
         }
         if let Some(value) = self.launch_on_startup { settings.launch_on_startup = value; }
         if let Some(value) = self.hide_on_blur { settings.hide_on_blur = value; }
+        if let Some(value) = self.auto_check_update { settings.auto_check_update = value; }
         if let Some(value) = self.custom_scan_dirs { settings.custom_scan_dirs = value; }
         if let Some(value) = self.excluded_apps { settings.excluded_apps = value; }
         Ok(())
     }
+}
+
+fn default_auto_check_update() -> bool {
+    true
 }
 
 /// Application-wide persistent user settings.
@@ -46,6 +52,8 @@ pub struct AppSettings {
     pub max_results: usize,
     pub launch_on_startup: bool,
     pub hide_on_blur: bool,
+    #[serde(default = "default_auto_check_update")]
+    pub auto_check_update: bool,
     pub custom_scan_dirs: Vec<String>,
     pub excluded_apps: Vec<String>,
     #[serde(default)]
@@ -77,6 +85,7 @@ impl Default for AppSettings {
             max_results: 30,
             launch_on_startup: false,
             hide_on_blur: true,
+            auto_check_update: true,
             custom_scan_dirs: Vec::new(),
             excluded_apps: Vec::new(),
             pinned_items: Vec::new(),

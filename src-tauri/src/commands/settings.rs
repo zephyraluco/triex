@@ -207,6 +207,23 @@ pub fn close_settings_view(app: &AppHandle) {
     }
 }
 
+/// Permanently closes the kept-alive settings child webview (used before installer exit).
+pub fn destroy_settings_webview(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.set_settings_open(false);
+    let label = state
+        .settings_webview_label
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take());
+
+    if let Some(label) = label
+        && let Some(wv) = app.get_webview(&label)
+    {
+        let _ = wv.close();
+    }
+}
+
 /// Shows the main launcher window and mounts (or reveals the kept-alive) Settings child webview
 /// below the 64px header. Automatically hides any active plugin child webview first.
 pub fn open_settings_window(app: &AppHandle) -> AppResult<()> {
