@@ -44,7 +44,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVFQ0RDQzcwODY0QUExNjcKUldSbm9VcUdjTXpON3JjSU85Wk5MQmE0NlcyaGVsaGZKT3JCTno1c005QWxJTTBxZCswZ2U2YmoK",
       "endpoints": [
         "https://github.com/zephyraluco/triex/releases/latest/download/latest.json"
       ],
