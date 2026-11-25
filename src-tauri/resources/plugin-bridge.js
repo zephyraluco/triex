@@ -12,6 +12,7 @@
 
   let enterHandler = null;
   let subInputHandler = null;
+  let subInputKeyDownHandler = null;
 
   window.addEventListener("triex:plugin-enter", (event) => {
     if (typeof enterHandler === "function") {
@@ -25,6 +26,12 @@
     }
   });
 
+  window.addEventListener("triex:sub-input-keydown", (event) => {
+    if (typeof subInputKeyDownHandler === "function") {
+      subInputKeyDownHandler(event.detail);
+    }
+  });
+
   window.triex = Object.freeze({
     onPluginEnter(cb) {
       enterHandler = cb;
@@ -32,6 +39,9 @@
     setSubInput(cb, placeholder = "") {
       subInputHandler = cb;
       return invoke("set_plugin_sub_input", { placeholder });
+    },
+    onSubInputKeyDown(cb) {
+      subInputKeyDownHandler = cb;
     },
     hideMainWindow() {
       return invoke("hide_window");

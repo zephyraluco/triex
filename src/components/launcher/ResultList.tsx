@@ -28,6 +28,7 @@ interface GridCoord {
 
 export function ResultList() {
   const listRef = useRef<HTMLDivElement>(null);
+  const gridNavActiveRef = useRef(false);
   const results = useLauncherStore((s) => s.results);
   const query = useLauncherStore((s) => s.query);
   const selectedId = useLauncherStore((s) => s.selectedId);
@@ -189,6 +190,21 @@ export function ResultList() {
     }
   }, [selectedId]);
 
+  // Return ArrowLeft/ArrowRight to text editing whenever the user types or clicks the input.
+  useEffect(() => {
+    gridNavActiveRef.current = false;
+  }, [query]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof HTMLInputElement) {
+        gridNavActiveRef.current = false;
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+
   useEffect(() => {
     if (flatCoords.length === 0) return;
 
@@ -200,9 +216,18 @@ export function ResultList() {
       const currentIndex = idx === -1 ? 0 : idx;
       const current = flatCoords[currentIndex];
 
-      if (event.key === "ArrowRight") {
+      if (event.key === "Tab" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        gridNavActiveRef.current = true;
+        const nextIndex = event.shiftKey
+          ? (currentIndex - 1 + flatCoords.length) % flatCoords.length
+          : (currentIndex + 1) % flatCoords.length;
+        setSelectedId(flatCoords[nextIndex].item.id);
+      } else if (event.key === "ArrowRight") {
         const activeEl = document.activeElement;
         if (
+          !gridNavActiveRef.current &&
           activeEl instanceof HTMLInputElement &&
           activeEl.selectionStart !== null &&
           activeEl.selectionStart < activeEl.value.length
@@ -211,11 +236,13 @@ export function ResultList() {
         }
         event.preventDefault();
         event.stopPropagation();
+        gridNavActiveRef.current = true;
         const next = (currentIndex + 1) % flatCoords.length;
         setSelectedId(flatCoords[next].item.id);
       } else if (event.key === "ArrowLeft") {
         const activeEl = document.activeElement;
         if (
+          !gridNavActiveRef.current &&
           activeEl instanceof HTMLInputElement &&
           activeEl.selectionStart !== null &&
           activeEl.selectionStart > 0
@@ -224,11 +251,13 @@ export function ResultList() {
         }
         event.preventDefault();
         event.stopPropagation();
+        gridNavActiveRef.current = true;
         const prev = (currentIndex - 1 + flatCoords.length) % flatCoords.length;
         setSelectedId(flatCoords[prev].item.id);
       } else if (event.key === "ArrowDown") {
         event.preventDefault();
         event.stopPropagation();
+        gridNavActiveRef.current = true;
         const targetRow = rows[current.row + 1];
         if (targetRow && targetRow.length > 0) {
           const targetCol = Math.min(current.col, targetRow.length - 1);
@@ -237,6 +266,7 @@ export function ResultList() {
       } else if (event.key === "ArrowUp") {
         event.preventDefault();
         event.stopPropagation();
+        gridNavActiveRef.current = true;
         if (current.row > 0) {
           const targetRow = rows[current.row - 1];
           if (targetRow && targetRow.length > 0) {
@@ -298,7 +328,6 @@ export function ResultList() {
                 item={item}
                 isSelected={item.id === selectedId}
                 onSelect={handleSelect}
-                onHover={setSelectedId}
                 onContextMenu={handleContextMenu}
               />
             ))}

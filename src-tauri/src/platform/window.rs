@@ -140,7 +140,7 @@ pub fn position_on_cursor_monitor(window: &Window) {
         let mon_height = work.bottom - work.top;
 
         let x = work.left + (mon_width - win_size.width as i32) / 2;
-        let y = work.top + (mon_height as f64 * 0.20) as i32;
+        let y = work.top + (mon_height as f64 * 0.30) as i32;
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
 }

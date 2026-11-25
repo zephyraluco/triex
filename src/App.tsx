@@ -33,6 +33,7 @@ export default function App() {
     >
       <Command
         shouldFilter={false}
+        disablePointerSelection
         loop
         value={selectedId}
         onValueChange={setSelectedId}

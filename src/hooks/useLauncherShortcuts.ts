@@ -12,6 +12,14 @@ export function useLauncherShortcuts() {
     const onKeyDown = (event: KeyboardEvent) => {
       const state = useLauncherStore.getState();
 
+      if (event.key === "Tab" && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        event.preventDefault();
+        if (state.activePlugin) {
+          void ipc.forwardSubInputKeydown("Tab", event.shiftKey);
+        }
+        return;
+      }
+
       if (event.key === "Escape") {
         event.preventDefault();
         if (state.settingsOpen) {

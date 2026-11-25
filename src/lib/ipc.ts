@@ -143,6 +143,10 @@ export const ipc = {
     return invoke("forward_sub_input_value", { value });
   },
 
+  forwardSubInputKeydown(key: string, shiftKey = false): Promise<void> {
+    return invoke("forward_sub_input_keydown", { key, shiftKey });
+  },
+
   getSettings(): Promise<AppSettings> {
     return invoke("get_settings");
   },

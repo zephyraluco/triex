@@ -23,7 +23,6 @@ interface ResultItemProps {
   item: SearchResultItem;
   isSelected: boolean;
   onSelect: (item: SearchResultItem) => void;
-  onHover: (id: string) => void;
   onContextMenu: (item: SearchResultItem, event: MouseEvent<HTMLDivElement>) => void;
 }
 
@@ -105,7 +104,6 @@ export const ResultItem = memo(function ResultItem({
   item,
   isSelected,
   onSelect,
-  onHover,
   onContextMenu,
 }: ResultItemProps) {
   const [imgFailed, setImgFailed] = useState(false);
@@ -115,14 +113,13 @@ export const ResultItem = memo(function ResultItem({
     <CommandItem
       value={item.id}
       onSelect={() => onSelect(item)}
-      onMouseEnter={() => onHover(item.id)}
       onContextMenu={(e) => onContextMenu(item, e)}
       title={item.subtitle ? `${item.name}\n${item.subtitle}` : item.name}
       className={cn(
         "flex h-[88px] w-full flex-col items-center justify-center gap-2 rounded-xl px-1.5 py-2 text-center transition-colors cursor-pointer",
         "data-[selected=true]:bg-surface-active data-[selected=true]:text-foreground data-[selected=true]:ring-1 data-[selected=true]:ring-inset data-[selected=true]:ring-border/70",
         isSelected
-          ? "bg-surface-active text-foreground ring-1 ring-inset ring-border/70"
+          ? "bg-surface-active text-foreground ring-1 ring-inset ring-border/70 hover:bg-surface-active"
           : "hover:bg-surface-hover",
       )}
     >
@@ -142,7 +139,12 @@ export const ResultItem = memo(function ResultItem({
         )}
       </div>
 
-      <span className="w-full truncate text-[12px] font-normal leading-tight text-foreground/90">
+      <span
+        className={cn(
+          "w-full truncate text-[12px] leading-tight",
+          isSelected ? "font-medium text-foreground" : "font-normal text-foreground/90",
+        )}
+      >
         <HighlightText text={item.name} indices={item.matchIndices} />
       </span>
     </CommandItem>

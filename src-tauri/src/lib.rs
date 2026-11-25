@@ -189,6 +189,7 @@ pub fn run() {
             commands::plugin::detach_plugin_command,
             commands::plugin::set_plugin_sub_input,
             commands::plugin::forward_sub_input_value,
+            commands::plugin::forward_sub_input_keydown,
             commands::plugin::plugin_db_get,
             commands::plugin::plugin_db_put,
             commands::plugin::plugin_db_delete,

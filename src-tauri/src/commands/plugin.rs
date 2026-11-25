@@ -118,6 +118,32 @@ pub fn forward_sub_input_value(
 }
 
 #[tauri::command]
+pub fn forward_sub_input_keydown(
+    key: String,
+    shift_key: bool,
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    require_host_webview(&webview)?;
+    let label = state.active_plugin().map(|s| s.webview_label);
+
+    if let Some(label) = label
+        && let Some(wv) = app.get_webview(&label)
+    {
+        let detail = serde_json::json!({
+            "key": key,
+            "shiftKey": shift_key,
+        });
+        let script = format!(
+            "window.dispatchEvent(new CustomEvent('triex:sub-input-keydown', {{ detail: {detail} }}));"
+        );
+        let _ = wv.eval(&script);
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn plugin_db_get(
     key: String,
     webview: Webview,
