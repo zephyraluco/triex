@@ -20,6 +20,7 @@ export default defineConfig(() => ({
       input: {
         main: path.resolve(process.cwd(), "index.html"),
         settings: path.resolve(process.cwd(), "settings.html"),
+        everything: path.resolve(process.cwd(), "everything.html"),
       },
     },
   },

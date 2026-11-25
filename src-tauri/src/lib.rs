@@ -44,6 +44,7 @@ pub fn run() {
             let _ = show_main_launcher(app);
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_everything::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -63,6 +64,9 @@ pub fn run() {
                 .unwrap_or_else(|_| std::env::temp_dir().join("triex"));
             let paths = AppPaths::resolve(data_dir)?;
             let db = Database::open(&paths.db_path)?;
+            #[cfg(windows)]
+            crate::plugins::register_everything(&db)?;
+            app.manage(commands::everything::Results::default());
             let settings = db.load_settings()?;
 
             // Populate in-memory search index immediately from SQLite cache for instant startup.
@@ -198,6 +202,10 @@ pub fn run() {
             commands::clipboard::get_clipboard_snapshot,
             commands::clipboard::read_clipboard_text,
             commands::clipboard::paste_to_previous_window,
+            commands::everything::everything_status,
+            commands::everything::everything_search,
+            commands::everything::everything_clear,
+            commands::everything::everything_open_result,
             commands::plugin::list_plugins,
             commands::plugin::set_plugin_enabled,
             commands::plugin::open_plugin_command,

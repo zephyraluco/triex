@@ -38,6 +38,9 @@ pub fn set_plugin_enabled(
             close_active_plugin(&app)?;
         }
         evict_plugin_webview(&app, &plugin_id);
+        if plugin_id == crate::plugins::EVERYTHING_ID {
+            crate::commands::everything::close_detached(&app);
+        }
     }
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {

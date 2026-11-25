@@ -1,0 +1,16 @@
+[package]
+name = "tauri-plugin-everything"
+version = "0.1.0"
+edition = "2024"
+links = "tauri-plugin-everything"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+tokio = { version = "1", features = ["sync", "time"] }
+
+[build-dependencies]
+cc = "1"
+tauri-plugin = { version = "2", features = ["build"] }

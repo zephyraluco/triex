@@ -6,9 +6,10 @@ use tauri::{
     WebviewWindowBuilder,
 };
 
-use crate::commands::settings::close_settings_view;
+use crate::commands::{everything, settings::close_settings_view};
 use crate::error::{AppError, AppResult};
 use crate::platform::window::{set_logical_height, set_shell_webview_bounds};
+use crate::plugins::EVERYTHING_ID;
 use crate::state::{AppState, CachedPluginWebview};
 
 const PLUGIN_BRIDGE_JS: &str = include_str!("../../resources/plugin-bridge.js");
@@ -30,7 +31,11 @@ fn build_plugin_url(plugin_id: &str, entry: &str) -> AppResult<tauri::Url> {
         .map_err(|e| AppError::Plugin(format!("Invalid plugin URL '{url_str}': {e}")))
 }
 
-fn build_plugin_init_script(theme: crate::config::ThemeMode, feature_code: &str) -> String {
+fn build_plugin_init_script(
+    theme: crate::config::ThemeMode,
+    feature_code: &str,
+    builtin: bool,
+) -> String {
     let theme_str = match theme {
         crate::config::ThemeMode::Light => "light",
         crate::config::ThemeMode::Dark => "dark",
@@ -38,7 +43,7 @@ fn build_plugin_init_script(theme: crate::config::ThemeMode, feature_code: &str)
     };
     let code_json = serde_json::to_string(feature_code).unwrap_or_else(|_| "\"\"".to_string());
     format!(
-        "window.__TRIEX_THEME__ = '{theme_str}';\nwindow.__TRIEX_FEATURE_CODE__ = {code_json};\n{PLUGIN_BRIDGE_JS}"
+        "window.__TRIEX_THEME__ = '{theme_str}';\nwindow.__TRIEX_FEATURE_CODE__ = {code_json};\nwindow.__TRIEX_BUILTIN_EVERYTHING__ = {builtin};\n{PLUGIN_BRIDGE_JS}"
     )
 }
 
@@ -72,6 +77,7 @@ pub fn open_plugin(
         .get_window("main")
         .ok_or_else(|| AppError::Platform("Main window not available".to_string()))?;
 
+    let builtin = plugin.id == EVERYTHING_ID;
     let plugin_height = plugin.manifest.height.clamp(240.0, 720.0);
     let reused_label = state
         .cached_plugin_webviews
@@ -105,11 +111,28 @@ pub fn open_plugin(
         existing_label
     } else {
         let seq = PLUGIN_VIEW_SEQ.fetch_add(1, Ordering::Relaxed);
-        let new_label = format!("plugin-{}:{seq}", plugin.id);
-        let parsed_url = build_plugin_url(&plugin.id, &plugin.manifest.entry)?;
-        let init_script = build_plugin_init_script(state.current_settings().theme, feature_code);
+        let (new_label, url) = if builtin {
+            (
+                format!("{}{seq}", everything::EMBEDDED_PREFIX),
+                WebviewUrl::App(everything::ENTRY.into()),
+            )
+        } else {
+            (
+                format!("plugin-{}:{seq}", plugin.id),
+                WebviewUrl::External(build_plugin_url(&plugin.id, &plugin.manifest.entry)?),
+            )
+        };
+        let init_script =
+            build_plugin_init_script(state.current_settings().theme, feature_code, builtin);
 
-        let builder = WebviewBuilder::new(&new_label, WebviewUrl::External(parsed_url))
+        let handle = app.clone();
+        let builder = WebviewBuilder::new(&new_label, url)
+            .on_navigation(move |url| !builtin || everything::is_builtin_url(&handle, url))
+            .on_page_load(move |view, payload| {
+                if builtin && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                    everything::clear_results(view.app_handle(), view.label());
+                }
+            })
             .transparent(true)
             .initialization_script(&init_script);
 
@@ -146,7 +169,11 @@ pub fn open_plugin(
         plugin_name: plugin.name.clone(),
         feature_code: feature_code.to_string(),
         webview_label: label,
-        sub_input_placeholder: format!("在 {} 中输入...", plugin.name),
+        sub_input_placeholder: if builtin {
+            "输入文件名或 Everything 查询".into()
+        } else {
+            format!("在 {} 中输入...", plugin.name)
+        },
     };
 
     *state.content_mode.lock().map_err(|_| AppError::Platform("Content mode lock poisoned".into()))? = crate::state::ContentMode::Plugin(session.clone());
@@ -196,6 +223,17 @@ pub fn close_active_plugin(app: &AppHandle) -> AppResult<()> {
     let existing = state.take_active_plugin();
 
     if let Some(session) = existing {
+        if session.plugin_id == EVERYTHING_ID {
+            everything::clear_results(app, &session.webview_label);
+            evict_plugin_webview(app, EVERYTHING_ID);
+            if !state.settings_open()
+                && let Some(shell) = app.get_webview("main")
+            {
+                let _ = shell.set_focus();
+            }
+            let _ = app.emit("triex://plugin-closed", &session.plugin_id);
+            return Ok(());
+        }
         if let Some(wv) = app.get_webview(&session.webview_label) {
             let _ = wv.hide();
         }
@@ -261,23 +299,48 @@ pub fn detach_active_plugin(app: &AppHandle) -> AppResult<()> {
     close_active_plugin(app)?;
     evict_plugin_webview(app, &plugin.id);
 
-    let detached_label = format!("plugin-detached-{}", plugin.id);
+    let builtin = plugin.id == EVERYTHING_ID;
+    let detached_label = if builtin {
+        everything::DETACHED_LABEL.to_owned()
+    } else {
+        format!("plugin-detached-{}", plugin.id)
+    };
     if let Some(win) = app.get_webview_window(&detached_label) {
         let _ = win.show();
         let _ = win.set_focus();
         return Ok(());
     }
 
-    let parsed_url = build_plugin_url(&plugin.id, &plugin.manifest.entry)?;
+    let url = if builtin {
+        everything::clear_results(app, everything::DETACHED_LABEL);
+        WebviewUrl::App(everything::ENTRY.into())
+    } else {
+        WebviewUrl::External(build_plugin_url(&plugin.id, &plugin.manifest.entry)?)
+    };
     let init_script =
-        build_plugin_init_script(state.current_settings().theme, &existing.feature_code);
+        build_plugin_init_script(state.current_settings().theme, &existing.feature_code, builtin);
 
-    WebviewWindowBuilder::new(app, &detached_label, WebviewUrl::External(parsed_url))
+    let handle = app.clone();
+    let window = WebviewWindowBuilder::new(app, &detached_label, url)
+        .on_navigation(move |url| !builtin || everything::is_builtin_url(&handle, url))
+        .on_page_load(move |view, payload| {
+            if builtin && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                everything::clear_results(view.app_handle(), view.label());
+            }
+        })
         .title(&plugin.name)
         .inner_size(LAUNCHER_WIDTH, plugin.manifest.height.clamp(360.0, 800.0))
         .initialization_script(&init_script)
         .center()
         .build()?;
+    if builtin {
+        let handle = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                everything::clear_results(&handle, everything::DETACHED_LABEL);
+            }
+        });
+    }
 
     Ok(())
 }

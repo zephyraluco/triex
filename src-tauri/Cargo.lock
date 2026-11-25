@@ -4426,6 +4426,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-everything"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "tokio",
+]
+
+[[package]]
 name = "tauri-plugin-global-shortcut"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5004,6 +5015,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
+ "tauri-plugin-everything",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",

@@ -1,0 +1,12 @@
+{
+  "id": "triex-everything",
+  "name": "本地搜索",
+  "version": "0.1.0",
+  "description": "使用 Everything 搜索本地文件和文件夹",
+  "entry": "everything.html",
+  "height": 480,
+  "features": [
+    { "code": "find", "explain": "本地搜索", "cmds": ["find", "everything", "文件搜索"] }
+  ],
+  "permissions": ["everything"]
+}

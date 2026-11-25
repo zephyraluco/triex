@@ -1,4 +1,5 @@
 pub mod clipboard;
+pub mod everything;
 pub mod launcher;
 pub mod menu;
 pub mod plugin;

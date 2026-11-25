@@ -57,6 +57,22 @@
         return invoke("plugin_db_delete", { key });
       },
     }),
+    ...(window.__TRIEX_BUILTIN_EVERYTHING__ ? {
+      everything: Object.freeze({
+        status() {
+          return invoke("everything_status");
+        },
+        clear(sequence) {
+          return invoke("everything_clear", { sequence });
+        },
+        search(request, sequence) {
+          return invoke("everything_search", { request, sequence });
+        },
+        openResult(id, action) {
+          return invoke("everything_open_result", { id, action });
+        },
+      }),
+    } : {}),
     clipboard: Object.freeze({
       getSnapshot() {
         return invoke("get_clipboard_snapshot");

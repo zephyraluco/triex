@@ -258,6 +258,15 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             ref={inputRef}
             value={subInput}
             onChange={(e) => handleSubInputChange(e.target.value)}
+            onKeyDown={(event) => {
+              if (activePlugin.pluginId !== "triex-everything" || event.nativeEvent.isComposing
+                || event.altKey || event.ctrlKey || event.metaKey) return;
+              if (["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+                event.preventDefault();
+                event.stopPropagation();
+                void ipc.forwardSubInputKeydown(event.key, event.shiftKey);
+              }
+            }}
             onMouseDown={(e) => handleInputMouseDown(e, subInput)}
             placeholder={activePlugin.subInputPlaceholder || "输入插件指令..."}
             autoFocus
