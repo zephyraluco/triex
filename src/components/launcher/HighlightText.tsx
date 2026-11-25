@@ -26,7 +26,7 @@ export const HighlightText = memo(function HighlightText({
         hitSet.has(idx) ? (
           <mark
             key={idx}
-            className="bg-transparent font-semibold text-blue-600 dark:text-blue-400"
+            className="bg-transparent font-semibold text-highlight"
           >
             {char}
           </mark>

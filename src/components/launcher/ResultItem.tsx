@@ -120,10 +120,10 @@ export const ResultItem = memo(function ResultItem({
       title={item.subtitle ? `${item.name}\n${item.subtitle}` : item.name}
       className={cn(
         "flex h-[88px] w-full flex-col items-center justify-center gap-2 rounded-xl px-1.5 py-2 text-center transition-colors cursor-pointer",
-        "data-[selected=true]:bg-black/[0.08] data-[selected=true]:text-foreground dark:data-[selected=true]:bg-white/[0.12]",
+        "data-[selected=true]:bg-surface-active data-[selected=true]:text-foreground data-[selected=true]:ring-1 data-[selected=true]:ring-inset data-[selected=true]:ring-border/70",
         isSelected
-          ? "bg-black/[0.08] text-foreground dark:bg-white/[0.12]"
-          : "hover:bg-black/[0.05] dark:hover:bg-white/[0.07]",
+          ? "bg-surface-active text-foreground ring-1 ring-inset ring-border/70"
+          : "hover:bg-surface-hover",
       )}
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center">
@@ -142,7 +142,7 @@ export const ResultItem = memo(function ResultItem({
         )}
       </div>
 
-      <span className="w-full truncate text-[12px] font-normal leading-tight text-zinc-800 dark:text-zinc-200">
+      <span className="w-full truncate text-[12px] font-normal leading-tight text-foreground/90">
         <HighlightText text={item.name} indices={item.matchIndices} />
       </span>
     </CommandItem>

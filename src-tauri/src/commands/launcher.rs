@@ -438,7 +438,6 @@ pub fn hide_main_launcher(app: &AppHandle, restore_focus: bool) {
     }
 
     let epoch = state.visibility_epoch.fetch_add(1, Ordering::SeqCst) + 1;
-    state.in_settings_view.store(false, Ordering::SeqCst);
     let _ = close_active_plugin(app);
 
     if let Some(window) = app.get_webview_window("main") {

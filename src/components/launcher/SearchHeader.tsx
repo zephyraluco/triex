@@ -102,7 +102,7 @@ function TriexBrandBadge() {
             event.stopPropagation();
             void ipc.showBrandContextMenu();
           }}
-          className="size-9 shrink-0 rounded-full shadow-xs"
+          className="size-9 shrink-0 rounded-xl shadow-xs"
         >
           <TriexLogoGlyph className="size-5" />
         </Button>
@@ -195,20 +195,12 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
 
   if (settingsOpen) {
     return (
-      <div>
+      <div className="border-b border-border/70">
         <div
           onMouseDown={handleHeaderMouseDown}
           className="flex h-16 shrink-0 items-center justify-between px-4"
         >
-          <div className="inline-flex h-9 items-center gap-1 rounded-full border border-border bg-secondary/80 p-1">
-            <Badge
-              variant="default"
-              className="h-7 gap-1.5 rounded-full px-2.5 text-xs font-medium"
-            >
-              <TriexLogoGlyph className="size-3.5" />
-              <span>设置</span>
-            </Badge>
-
+          <div className="flex items-center gap-2.5">
             <Button
               type="button"
               variant="ghost"
@@ -217,18 +209,27 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
                 closeSettings();
                 requestAnimationFrame(() => inputRef.current?.focus());
               }}
-              className="h-7 gap-1 rounded-full px-2.5 text-xs text-muted-foreground hover:text-foreground"
+              className="h-8 gap-1.5 rounded-lg border border-border/70 bg-surface px-2.5 text-xs font-medium text-foreground hover:bg-surface-hover"
             >
+              <ArrowLeft className="size-3.5" />
               <span>返回搜索</span>
-              <X className="size-3.5" />
             </Button>
+
+            <Separator orientation="vertical" className="h-4 bg-border/80" />
+
+            <span className="text-[15px] font-semibold tracking-tight text-foreground">
+              偏好设置
+            </span>
           </div>
 
           <div className="h-full flex-1" />
 
           <div className="flex items-center gap-1.5">
             {statusMessage && (
-              <Badge variant="secondary" className="mr-1 font-normal">
+              <Badge
+                variant="secondary"
+                className="mr-1 rounded-lg border border-border/70 bg-surface font-normal text-foreground/90"
+              >
                 {statusMessage}
               </Badge>
             )}
@@ -240,7 +241,7 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
                   variant="ghost"
                   size="icon"
                   onClick={() => void ipc.showBrandContextMenu()}
-                  className="size-8 rounded-full text-muted-foreground"
+                  className="size-8 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
                 >
                   <MoreVertical className="size-4" />
                 </Button>
@@ -251,7 +252,6 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             <TriexBrandBadge />
           </div>
         </div>
-        <Separator />
       </div>
     );
   }
@@ -265,10 +265,10 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
         <>
           <Button
             type="button"
-            variant="secondary"
+            variant="ghost"
             size="sm"
             onClick={handleClosePlugin}
-            className="h-8 shrink-0 gap-1.5 rounded-full px-3"
+            className="h-8 shrink-0 gap-1.5 rounded-lg border border-border/70 bg-surface px-2.5 text-xs font-medium text-foreground hover:bg-surface-hover"
           >
             <ArrowLeft className="size-3.5" />
             <span>{activePlugin.pluginName}</span>
@@ -291,7 +291,7 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
                 variant="ghost"
                 size="icon"
                 onClick={handleDetachPlugin}
-                className="size-8 rounded-full text-muted-foreground"
+                className="size-8 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
               >
                 <ExternalLink className="size-4" />
               </Button>
@@ -306,7 +306,7 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
           {attachment && (
             <Badge
               variant="secondary"
-              className="h-8 max-w-[200px] shrink-0 gap-1.5 rounded-lg border border-border px-2 text-xs font-medium"
+              className="h-8 max-w-[200px] shrink-0 gap-1.5 rounded-lg border border-border/70 bg-surface px-2 text-xs font-medium"
             >
               {attachment.kind === "image" && attachment.previewUrl ? (
                 <img
@@ -348,7 +348,10 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
           />
 
           {statusMessage && (
-            <Badge variant="secondary" className="shrink-0 font-normal">
+            <Badge
+              variant="secondary"
+              className="shrink-0 rounded-lg border border-border/70 bg-surface font-normal text-foreground/90"
+            >
               {statusMessage}
             </Badge>
           )}
@@ -365,7 +368,7 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
                       rawText: clipboard.preview,
                     })
                   }
-                  className="h-7 max-w-[170px] shrink-0 cursor-pointer gap-1.5 rounded-full px-2.5 text-[11px] font-normal text-muted-foreground hover:text-foreground"
+                  className="h-7 max-w-[170px] shrink-0 cursor-pointer gap-1.5 rounded-lg border border-border/70 bg-surface px-2.5 text-[11px] font-normal text-muted-foreground hover:bg-surface-hover hover:text-foreground"
                 >
                   <Clipboard className="size-3 shrink-0" />
                   <span className="truncate">{clipboard.preview}</span>
@@ -396,7 +399,7 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
                 setQuery("");
                 inputRef.current?.focus();
               }}
-              className="size-7 shrink-0 rounded-full text-muted-foreground"
+              className="size-7 shrink-0 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
               aria-label="清空输入"
             >
               <X className="size-4" />

@@ -22,6 +22,10 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+  --color-highlight: var(--highlight);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -45,9 +49,13 @@
   --accent-foreground: oklch(0.21 0.006 285.885);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.90 0.004 286.32);
-  --input: oklch(0.90 0.004 286.32);
+  --border: oklch(0 0 0 / 9%);
+  --input: oklch(0 0 0 / 13%);
   --ring: oklch(0.705 0.015 286.067);
+  --surface: oklch(1 0 0 / 56%);
+  --surface-hover: oklch(0 0 0 / 4.5%);
+  --surface-active: oklch(0 0 0 / 8%);
+  --highlight: oklch(0.546 0.215 262.881);
   --radius: 0.625rem;
 }
 
@@ -68,9 +76,13 @@
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.396 0.141 25.723);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
   --ring: oklch(0.552 0.016 285.938);
+  --surface: oklch(1 0 0 / 5%);
+  --surface-hover: oklch(1 0 0 / 6.5%);
+  --surface-active: oklch(1 0 0 / 11%);
+  --highlight: oklch(0.707 0.165 254.624);
 }
 
 @layer base {
@@ -107,15 +119,20 @@
 
 /* Subtle custom scrollbar for launcher result list */
 .launcher-scroll::-webkit-scrollbar {
-  width: 6px;
+  width: 10px;
 }
 .launcher-scroll::-webkit-scrollbar-track {
   background: transparent;
+  margin: 6px 0;
 }
 .launcher-scroll::-webkit-scrollbar-thumb {
   background: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+  background-clip: content-box;
+  border: 3px solid transparent;
   border-radius: 9999px;
 }
 .launcher-scroll::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklab, var(--muted-foreground) 50%, transparent);
+  background-clip: content-box;
+  border: 3px solid transparent;
 }

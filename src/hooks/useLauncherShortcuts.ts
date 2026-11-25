@@ -96,8 +96,15 @@ export function useLauncherShortcuts(inputRef: RefObject<HTMLInputElement | null
     const unlisteners = [
       listen<number>("triex://launcher-hidden", async (event) => {
         const epoch = event.payload;
+        const isSettingsOpen = useLauncherStore.getState().settingsOpen;
         resetSearch();
         setStatusMessage(null);
+        if (isSettingsOpen) {
+          requestAnimationFrame(() => {
+            void ipc.completeHide(epoch);
+          });
+          return;
+        }
         try {
           const response = await ipc.searchItems("", Date.now(), HOME_RESET_FETCH_LIMIT);
           setSearchResult(response.items, response.totalIndexed);

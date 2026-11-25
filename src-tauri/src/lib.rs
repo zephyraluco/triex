@@ -98,12 +98,10 @@ pub fn run() {
                             .map(|g| g.is_some())
                             .unwrap_or(false);
                         let menu_open = st.context_menu_open.load(Ordering::SeqCst);
-                        let in_settings = st.in_settings_view.load(Ordering::SeqCst);
-                        // Avoid closing when focus moves into a child plugin webview, native popup menu, or embedded settings.
+                        // Avoid closing when focus moves into a child plugin webview or native popup menu.
                         if st.current_settings().hide_on_blur
                             && !has_active_plugin
                             && !menu_open
-                            && !in_settings
                         {
                             hide_main_launcher(&handle, false);
                         }

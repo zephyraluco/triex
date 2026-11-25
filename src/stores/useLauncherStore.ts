@@ -134,14 +134,18 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
     }
   },
   setSettingsTab: (settingsTab) => set({ settingsTab }),
-  setActivePlugin: (activePlugin) =>
+  setActivePlugin: (activePlugin) => {
+    if (get().settingsOpen) {
+      void ipc.setSettingsViewOpen(false);
+    }
     set({
       activePlugin,
       settingsOpen: false,
       subInput: "",
       actionMenuOpen: false,
       actionMenuPos: null,
-    }),
+    });
+  },
   setSubInputPlaceholder: (placeholder) =>
     set((state) =>
       state.activePlugin
@@ -159,19 +163,14 @@ export const useLauncherStore = create<LauncherState>((set, get) => ({
   closeActionMenu: () => set({ actionMenuOpen: false, actionMenuPos: null }),
   setIsRebuilding: (isRebuilding) => set({ isRebuilding }),
   setStatusMessage: (statusMessage) => set({ statusMessage }),
-  resetSearch: () => {
-    if (get().settingsOpen) {
-      void ipc.setSettingsViewOpen(false);
-    }
+  resetSearch: () =>
     set({
       query: "",
       subInput: "",
       attachment: null,
       showDashboard: false,
-      settingsOpen: false,
       expandedSections: {},
       actionMenuOpen: false,
       actionMenuPos: null,
-    });
-  },
+    }),
 }));

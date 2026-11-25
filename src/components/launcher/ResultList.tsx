@@ -261,11 +261,11 @@ export function ResultList() {
   }
 
   return (
-    <CommandList ref={listRef} className="max-h-[468px] px-3 pb-3">
+    <CommandList ref={listRef} className="launcher-scroll max-h-[468px] px-3 pb-3">
       {sections.map((section) => (
         <div key={section.key} className="py-1">
           <div className="flex items-center justify-between px-1.5 pb-2 pt-1">
-            <span className="text-[13px] font-semibold text-zinc-800 dark:text-zinc-200">
+            <span className="text-xs font-semibold tracking-wide text-muted-foreground">
               {section.heading}
             </span>
             {section.canExpand && (
@@ -274,7 +274,7 @@ export function ResultList() {
                 variant="ghost"
                 size="sm"
                 onClick={() => toggleSectionExpanded(section.key)}
-                className="h-6 gap-0.5 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                className="h-6 gap-0.5 rounded-lg px-2 text-[11px] text-muted-foreground hover:bg-surface-hover hover:text-foreground"
               >
                 <span>
                   {section.isExpanded

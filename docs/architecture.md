@@ -248,7 +248,7 @@ sequenceDiagram
 | | `open_item_folder(itemId)` | 在资源管理器中定位目标文件 |
 | | `toggle_pin_item(itemId)` / `remove_recent_item(itemId)` | 固定/取消固定常用项；清除单条使用记录 |
 | | `show_item_context_menu(itemId)` / `show_brand_context_menu()` | 弹出原生 Windows 上下文菜单（带防失焦隐藏保护） |
-| | `set_settings_view_open(open)` | 同步内嵌设置视图状态至后端以保护失焦不关闭 |
+| | `set_settings_view_open(open)` | 同步内嵌设置视图状态至后端（用于品牌菜单文案切换等） |
 | | `resize_window(height)` / `hide_window()` / `complete_hide(epoch)` | 窗口高度同步与离屏预重置隐藏握手 |
 | **剪贴板** | `get_clipboard_snapshot()` / `paste_to_previous_window()` | 读取剪贴板文本摘要 / 归还焦点并模拟 `Ctrl+V` |
 | **插件宿主** | `list_plugins()` / `set_plugin_enabled(pluginId, enabled)` | 插件列表查询与启停 |
