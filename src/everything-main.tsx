@@ -35,7 +35,8 @@ interface Page {
   nextOffset: number | null;
 }
 
-type Status = "ready" | "indexing" | "notRunning" | "unsupportedPlatform" | "backendUnavailable";
+type Status = "ready" | "indexing" | "notRunning" | "unsupportedPlatform" | "backendUnavailable"
+  | "snapshotMissing" | "snapshotUnsupported" | "snapshotStale" | "serviceIncompatible";
 
 interface EverythingBridge {
   status(): Promise<Status>;
@@ -56,13 +57,21 @@ const everything = window.triex.everything;
 const STATUS_TEXT: Record<Status, string> = {
   ready: "输入文件名或搜索条件，例如 ext:pdf 年报",
   indexing: "正在建立本地文件索引…",
-  notRunning: "本地文件索引尚未启动。",
+  notRunning: "Everything Windows 服务未运行。",
+  snapshotMissing: "找不到 Everything.db。",
+  snapshotUnsupported: "此 Everything.db 的索引格式暂未支持。",
+  snapshotStale: "Everything.db 与当前 NTFS 日志不一致，暂时无法安全续读。",
+  serviceIncompatible: "Everything Windows 服务的管道协议不兼容。",
   unsupportedPlatform: "本地文件索引仅支持 Windows。",
   backendUnavailable: "无法读取本地文件索引。",
 };
 
 const ERROR_TEXT: Record<string, string> = {
   not_running: STATUS_TEXT.notRunning,
+  snapshot_missing: STATUS_TEXT.snapshotMissing,
+  snapshot_unsupported: STATUS_TEXT.snapshotUnsupported,
+  snapshot_stale: STATUS_TEXT.snapshotStale,
+  service_incompatible: STATUS_TEXT.serviceIncompatible,
   indexing: STATUS_TEXT.indexing,
   unsupported_platform: STATUS_TEXT.unsupportedPlatform,
   backend_unavailable: STATUS_TEXT.backendUnavailable,

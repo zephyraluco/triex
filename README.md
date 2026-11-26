@@ -100,7 +100,7 @@ bun run tauri build
 
 ## 本地文件搜索
 
-在 Windows 上输入 `find` 或「本地搜索」。首次打开时，Triex 在后台索引当前用户可访问的本地固定磁盘。支持按名称、路径、大小或修改时间排序、翻页、回车打开和定位所在文件夹。可通过右上角按钮切换到独立窗口。查询示例为 `ext:pdf 年报 !草稿`。 [索引机制和查询语法](crates/tauri-plugin-everything/README.md)
+在 Windows 上输入 `find` 或「本地搜索」。此功能读取已有 `Everything.db`，并连接 Everything Windows 服务核对 NTFS 卷和 USN 检查点。检查通过后可搜索、排序、分页、打开和定位文件。 [当前兼容范围](crates/tauri-plugin-everything/README.md)
 
 ## 🧩 本地插件开发简介
 

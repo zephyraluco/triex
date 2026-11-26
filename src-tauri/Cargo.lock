@@ -4433,7 +4433,6 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "tokio",
- "walkdir",
  "windows 0.58.0",
 ]
 

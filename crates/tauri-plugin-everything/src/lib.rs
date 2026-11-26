@@ -7,6 +7,10 @@ use tauri::{
 #[cfg(windows)]
 mod index;
 #[cfg(windows)]
+mod service;
+#[cfg(windows)]
+mod snapshot;
+#[cfg(windows)]
 mod windows;
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -66,6 +70,10 @@ pub enum Status {
     Ready,
     Indexing,
     NotRunning,
+    SnapshotMissing,
+    SnapshotUnsupported,
+    SnapshotStale,
+    ServiceIncompatible,
     UnsupportedPlatform,
     BackendUnavailable,
 }
@@ -75,6 +83,10 @@ pub enum Status {
 pub enum Error {
     InvalidRequest,
     NotRunning,
+    SnapshotMissing,
+    SnapshotUnsupported,
+    SnapshotStale,
+    ServiceIncompatible,
     Indexing,
     UnsupportedPlatform,
     BackendUnavailable,

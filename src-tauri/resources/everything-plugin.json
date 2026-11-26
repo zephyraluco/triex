@@ -2,7 +2,7 @@
   "id": "triex-everything",
   "name": "本地搜索",
   "version": "0.1.0",
-  "description": "搜索本地固定磁盘中的文件和文件夹",
+  "description": "读取 Everything.db 并通过 Everything Windows 服务校验 NTFS 索引",
   "entry": "everything.html",
   "height": 480,
   "features": [
