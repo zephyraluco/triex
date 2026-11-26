@@ -1,5 +1,10 @@
-use crate::{Error, ItemKind, SearchItem, index::Entry};
+use crate::{
+    Error,
+    index::Entry,
+    tree::{File, Folder, Tree},
+};
 
+#[derive(Clone)]
 pub(crate) struct Volume {
     pub(crate) guid: String,
     pub(crate) drive: String,
@@ -9,7 +14,7 @@ pub(crate) struct Volume {
 
 pub(crate) struct Snapshot {
     pub(crate) volumes: Vec<Volume>,
-    pub(crate) entries: Vec<Entry>,
+    pub(crate) trees: Vec<Tree>,
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -78,6 +83,7 @@ impl<'a> Reader<'a> {
 struct Directory {
     name: String,
     modified: u64,
+    frn: u64,
     path: Option<String>,
 }
 
@@ -140,7 +146,7 @@ impl Snapshot {
         for &parent in &parents {
             let name = reader.name(&mut previous)?;
             let modified = reader.u64()?;
-            let _file_reference = reader.u64()?;
+            let frn = reader.u64()?;
             let path = if parent >= directories {
                 let volume = volumes.get(parent - directories).ok_or(INVALID)?;
                 if !name.eq_ignore_ascii_case(&volume.drive) {
@@ -154,6 +160,7 @@ impl Snapshot {
             folders.push(Directory {
                 name,
                 modified,
+                frn,
                 path,
             });
         }
@@ -178,22 +185,51 @@ impl Snapshot {
             }
         }
 
-        let mut entries = Vec::with_capacity(directories + files);
+        let mut trees: Vec<_> = volumes.iter().map(|_| Tree::default()).collect();
+        let mut owners = Vec::with_capacity(folders.len());
+        for (index, folder) in folders.iter().enumerate() {
+            let path = folder.path.as_deref().ok_or(INVALID)?;
+            let owner = volumes
+                .iter()
+                .position(|v| {
+                    path.get(..2)
+                        .is_some_and(|d| d.eq_ignore_ascii_case(&v.drive))
+                })
+                .ok_or(INVALID)?;
+            owners.push(owner);
+            let parent = folders.get(parents[index]).map(|dir| dir.frn);
+            if trees[owner]
+                .folders
+                .insert(
+                    folder.frn,
+                    Folder {
+                        name: folder.name.clone(),
+                        modified: folder.modified,
+                        parent,
+                    },
+                )
+                .is_some()
+            {
+                return Err(INVALID);
+            }
+        }
         previous.clear();
         for _ in 0..files {
-            let folder = folders.get(reader.u32()? as usize).ok_or(INVALID)?;
+            let parent = reader.u32()? as usize;
+            let folder = folders.get(parent).ok_or(INVALID)?;
             let name = reader.name(&mut previous)?;
             check_name(&name)?;
-            let path = join(folder.path.as_deref().ok_or(INVALID)?, &name)?;
             let size = reader.u64()?;
             let modified = reader.u64()?;
-            entries.push(Entry::new(SearchItem {
-                name,
-                path,
-                kind: ItemKind::File,
-                size_bytes: (size != u64::MAX).then_some(size),
-                modified_at: unix_millis(modified),
-            }));
+            if trees[owners[parent]]
+                .files
+                .entry(folder.frn)
+                .or_default()
+                .insert(name, File { size, modified })
+                .is_some()
+            {
+                return Err(INVALID);
+            }
         }
 
         if reader.u32()? as usize != directories {
@@ -210,16 +246,15 @@ impl Snapshot {
             return Err(INVALID);
         }
 
-        entries.extend(folders.into_iter().map(|folder| {
-            Entry::new(SearchItem {
-                name: folder.name,
-                path: folder.path.expect("resolved directory path"),
-                kind: ItemKind::Folder,
-                size_bytes: None,
-                modified_at: unix_millis(folder.modified),
-            })
-        }));
-        Ok(Self { volumes, entries })
+        Ok(Self { volumes, trees })
+    }
+
+    pub(crate) fn entries(&self) -> Result<Vec<Entry>> {
+        let mut entries = Vec::new();
+        for (volume, tree) in self.volumes.iter().zip(&self.trees) {
+            entries.extend(tree.entries(&volume.drive)?);
+        }
+        Ok(entries)
     }
 }
 
@@ -227,7 +262,7 @@ fn valid_drive(value: &str) -> bool {
     matches!(value.as_bytes(), [letter, b':'] if letter.is_ascii_alphabetic())
 }
 
-fn valid_volume_guid(value: &str) -> bool {
+pub(crate) fn valid_volume_guid(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 48
         && bytes[..11].eq_ignore_ascii_case(br"\\?\Volume{")
@@ -241,23 +276,159 @@ fn valid_volume_guid(value: &str) -> bool {
         })
 }
 
-fn check_name(value: &str) -> Result<()> {
+pub(crate) fn check_name(value: &str) -> Result<()> {
     if matches!(value, "" | "." | "..") || value.contains(['\\', '/', ':', '\0']) {
         return Err(INVALID);
     }
     Ok(())
 }
 
-fn join(parent: &str, name: &str) -> Result<String> {
+pub(crate) fn join(parent: &str, name: &str) -> Result<String> {
     if parent.len() + name.len() + 1 > 32_768 * 4 {
         return Err(INVALID);
     }
     Ok(format!("{}\\{name}", parent.trim_end_matches('\\')))
 }
 
-fn unix_millis(filetime: u64) -> Option<i64> {
+pub(crate) fn unix_millis(filetime: u64) -> Option<i64> {
     const EPOCH: i64 = 11_644_473_600_000;
     (filetime != 0 && filetime != u64::MAX).then(|| (filetime / 10_000) as i64 - EPOCH)
+}
+
+impl Snapshot {
+    pub(crate) fn write_to(&self, output: &mut impl std::io::Write) -> std::io::Result<()> {
+        use std::io::{Error as IoError, ErrorKind};
+        let invalid = || IoError::new(ErrorKind::InvalidData, "invalid Everything snapshot");
+        let mut folders = Vec::new();
+        let mut files = Vec::new();
+        for (volume_number, (volume, tree)) in self.volumes.iter().zip(&self.trees).enumerate() {
+            let paths = tree.paths(&volume.drive).map_err(|_| invalid())?;
+            let mut ids: Vec<_> = tree.folders.keys().copied().collect();
+            ids.sort_unstable_by(|a, b| paths[a].cmp(&paths[b]));
+            let positions: std::collections::HashMap<_, _> = ids
+                .iter()
+                .enumerate()
+                .map(|(index, &id)| (id, folders.len() + index))
+                .collect();
+            for id in ids {
+                let folder = &tree.folders[&id];
+                let parent = folder
+                    .parent
+                    .map(|parent| positions.get(&parent).copied().ok_or_else(invalid))
+                    .transpose()?;
+                folders.push((volume_number, parent, id, folder, paths[&id].clone()));
+                if let Some(children) = tree.files.get(&id) {
+                    for (name, file) in children {
+                        files.push((positions[&id], name.as_str(), file, name.to_lowercase()));
+                    }
+                }
+            }
+        }
+        files.sort_unstable_by(|a, b| {
+            a.3.cmp(&b.3)
+                .then_with(|| a.0.cmp(&b.0))
+                .then_with(|| a.1.cmp(b.1))
+        });
+        output.write_all(b"ESDb")?;
+        for number in [0x01070014, 0x2505, folders.len() as u32, files.len() as u32] {
+            output.write_all(&number.to_le_bytes())?;
+        }
+        compact_write(output, self.volumes.len())?;
+        for volume in &self.volumes {
+            output.write_all(&[0, 0])?;
+            for argument in [&volume.guid, &volume.drive] {
+                compact_write(output, argument.len())?;
+                output.write_all(argument.as_bytes())?;
+            }
+            output.write_all(&[0, 0])?;
+            output.write_all(&volume.journal_id.to_le_bytes())?;
+            output.write_all(&volume.start_usn.to_le_bytes())?;
+        }
+        output.write_all(&[0; 4])?;
+        for (volume, parent, _, _, _) in &folders {
+            let index = parent.unwrap_or(folders.len() + volume);
+            output.write_all(&(index as u32).to_le_bytes())?;
+        }
+        let mut previous: &[u8] = &[];
+        for (_, _, id, folder, _) in &folders {
+            prefix_write(output, previous, folder.name.as_bytes())?;
+            previous = folder.name.as_bytes();
+            output.write_all(&folder.modified.to_le_bytes())?;
+            output.write_all(&id.to_le_bytes())?;
+        }
+        previous = &[];
+        for (parent, name, file, _) in &files {
+            output.write_all(&(*parent as u32).to_le_bytes())?;
+            prefix_write(output, previous, name.as_bytes())?;
+            previous = name.as_bytes();
+            output.write_all(&file.size.to_le_bytes())?;
+            output.write_all(&file.modified.to_le_bytes())?;
+        }
+        output.write_all(&(folders.len() as u32).to_le_bytes())?;
+        let folder_names: Vec<_> = folders.iter().map(|f| f.3.name.to_lowercase()).collect();
+        let folder_paths: Vec<_> = folders.iter().map(|f| f.4.to_lowercase()).collect();
+        permutation_write(output, folders.len(), |a, b| {
+            folder_names[a].cmp(&folder_names[b])
+        })?;
+        output.write_all(&0_u32.to_le_bytes())?;
+        permutation_write(output, folders.len(), |a, b| {
+            folder_paths[a].cmp(&folder_paths[b])
+        })?;
+        permutation_write(output, folders.len(), |a, b| {
+            folders[a].3.modified.cmp(&folders[b].3.modified)
+        })?;
+        permutation_write(output, files.len(), |a, b| {
+            folder_paths[files[a].0].cmp(&folder_paths[files[b].0])
+        })?;
+        permutation_write(output, files.len(), |a, b| {
+            (files[a].2.size as i64).cmp(&(files[b].2.size as i64))
+        })?;
+        permutation_write(output, files.len(), |a, b| {
+            (files[a].2.modified as i64).cmp(&(files[b].2.modified as i64))
+        })?;
+        Ok(())
+    }
+}
+
+fn permutation_write(
+    output: &mut impl std::io::Write,
+    count: usize,
+    compare: impl Fn(usize, usize) -> std::cmp::Ordering,
+) -> std::io::Result<()> {
+    let mut order: Vec<u32> = (0..count as u32).collect();
+    order.sort_unstable_by(|a, b| compare(*a as usize, *b as usize).then_with(|| a.cmp(b)));
+    for id in order {
+        output.write_all(&id.to_le_bytes())?;
+    }
+    Ok(())
+}
+
+fn compact_write(output: &mut impl std::io::Write, value: usize) -> std::io::Result<()> {
+    if value < 255 {
+        output.write_all(&[value as u8])
+    } else {
+        output.write_all(&[255])?;
+        output.write_all(&(value as u32).to_le_bytes())
+    }
+}
+
+fn prefix_write(
+    output: &mut impl std::io::Write,
+    previous: &[u8],
+    name: &[u8],
+) -> std::io::Result<()> {
+    if previous == name {
+        return output.write_all(&[0]);
+    }
+    let shared = previous
+        .iter()
+        .zip(name)
+        .take_while(|(a, b)| a == b)
+        .count()
+        .min(name.len() - 1);
+    compact_write(output, name.len() - shared)?;
+    compact_write(output, previous.len() - shared)?;
+    output.write_all(&name[shared..])
 }
 
 #[cfg(test)]
@@ -278,7 +449,25 @@ mod tests {
         let bytes = std::fs::read(path).unwrap();
         let snapshot = Snapshot::decode(&bytes).unwrap();
         assert_eq!(snapshot.volumes.len(), 3);
-        assert_eq!(snapshot.entries.len(), 1_570_892);
+        assert_eq!(snapshot.entries().unwrap().len(), 1_570_892);
         assert!(snapshot.volumes.iter().all(|volume| volume.start_usn > 0));
+        let mut encoded = Vec::new();
+        snapshot.write_to(&mut encoded).unwrap();
+        if let Some(path) = std::env::var_os("TRIEX_TEST_NTFS_OUTPUT") {
+            std::fs::write(path, &encoded).unwrap();
+        }
+        let restored = Snapshot::decode(&encoded).unwrap();
+        assert_eq!(restored.volumes.len(), 3);
+        assert_eq!(restored.entries().unwrap().len(), 1_570_892);
+        for (old, new) in snapshot.trees.iter().zip(&restored.trees) {
+            assert!(old.folders == new.folders);
+            assert!(old.files == new.files);
+        }
+        for (old, new) in snapshot.volumes.iter().zip(&restored.volumes) {
+            assert_eq!(
+                (&old.guid, old.journal_id, old.start_usn),
+                (&new.guid, new.journal_id, new.start_usn)
+            );
+        }
     }
 }

@@ -100,7 +100,7 @@ bun run tauri build
 
 ## 本地文件搜索
 
-在 Windows 上输入 `find` 或「本地搜索」。此功能读取已有 `Everything.db`，并连接 Everything Windows 服务核对 NTFS 卷和 USN 检查点。检查通过后可搜索、排序、分页、打开和定位文件。 [当前兼容范围](crates/tauri-plugin-everything/README.md)
+在 Windows 上输入 `find` 或「本地搜索」。此功能通过 Everything Windows 服务建立和更新 NTFS 索引，并读写兼容的 `Everything.db`。搜索时支持排序、分页、打开和定位文件。 [当前兼容范围](crates/tauri-plugin-everything/README.md)
 
 ## 🧩 本地插件开发简介
 

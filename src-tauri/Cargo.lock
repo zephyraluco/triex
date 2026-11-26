@@ -4432,6 +4432,7 @@ dependencies = [
  "serde",
  "tauri",
  "tauri-plugin",
+ "tempfile",
  "tokio",
  "windows 0.58.0",
 ]

@@ -7,9 +7,13 @@ use tauri::{
 #[cfg(windows)]
 mod index;
 #[cfg(windows)]
+mod journal;
+#[cfg(windows)]
 mod service;
 #[cfg(windows)]
 mod snapshot;
+#[cfg(windows)]
+mod tree;
 #[cfg(windows)]
 mod windows;
 
