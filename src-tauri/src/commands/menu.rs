@@ -8,7 +8,6 @@ use crate::commands::launcher::{launch_item_by_id, open_folder_by_id, remove_rec
 use crate::commands::search::trigger_rebuild_index;
 use crate::commands::settings::{close_settings_view, open_settings_window, toggle_pin};
 use crate::error::{AppError, AppResult};
-use crate::platform::clipboard::write_clipboard_text;
 use crate::search::index::ItemKind;
 use crate::state::{AppState, ContextMenuAction};
 
@@ -50,11 +49,6 @@ pub fn popup_item_context_menu(app: &AppHandle, item_id: &str) -> AppResult<()> 
     let usage = state.db.load_all_usage().unwrap_or_default();
     let has_recent = usage.get(item_id).is_some_and(|u| u.launch_count > 0);
     let is_win32_app = raw_item.kind == ItemKind::App;
-    let copy_text = if !raw_item.subtitle.is_empty() {
-        raw_item.subtitle.clone()
-    } else {
-        raw_item.exec_path.clone()
-    };
 
     let mut actions = HashMap::new();
     let menu = Menu::new(app)?;
@@ -117,13 +111,6 @@ pub fn popup_item_context_menu(app: &AppHandle, item_id: &str) -> AppResult<()> 
         );
         menu.append(&folder_mi)?;
     }
-
-    let copy_mi = MenuItem::with_id(app, "ctx:copy", "复制路径 / 标识", true, None::<&str>)?;
-    actions.insert(
-        "ctx:copy".to_string(),
-        ContextMenuAction::CopyPath { text: copy_text },
-    );
-    menu.append(&copy_mi)?;
 
     let sep = PredefinedMenuItem::separator(app)?;
     menu.append(&sep)?;
@@ -238,14 +225,6 @@ pub fn handle_context_menu_event(app: &AppHandle, menu_id: &str) {
                 let _ = app.emit("triex://status-message", format!("打开位置失败: {err}"));
             }
         }
-        ContextMenuAction::CopyPath { text } => match write_clipboard_text(&text) {
-            Ok(()) => {
-                let _ = app.emit("triex://status-message", "已复制路径");
-            }
-            Err(err) => {
-                let _ = app.emit("triex://status-message", format!("复制失败: {err}"));
-            }
-        },
         ContextMenuAction::ToggleDashboard => {
             close_settings_view(app);
             let _ = app.emit("triex://toggle-dashboard", ());

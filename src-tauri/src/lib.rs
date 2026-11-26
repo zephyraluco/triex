@@ -22,9 +22,7 @@ use crate::commands::search::{refresh_directory_watcher, trigger_rebuild_index};
 use crate::commands::settings::register_launcher_hotkey;
 use crate::commands::updater::check_for_update_inner;
 use crate::config::AppPaths;
-use crate::platform::window::{
-    apply_window_vibrancy, is_window_or_child_foreground, position_on_cursor_monitor,
-};
+use crate::platform::window::{apply_window_vibrancy, is_window_or_child_foreground};
 use crate::protocol::icon::handle_icon_protocol;
 use crate::protocol::plugin::handle_plugin_protocol;
 use crate::state::AppState;
@@ -47,7 +45,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
-            Some(vec!["--silent"]),
+            None,
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol("icon", |ctx, request| {
@@ -79,6 +77,7 @@ pub fn run() {
 
             // Create a pure top-level container Window hosting non-overlapping child WebViews:
             // `main` (header + search shell) and at most one below-header view (settings or plugin).
+            // Always start hidden in the system tray (both autostart and manual launch) until invoked.
             let main_win = WindowBuilder::new(app, "main")
                 .title("Triex")
                 .inner_size(800.0, 64.0)
@@ -89,7 +88,7 @@ pub fn run() {
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .center()
-                .visible(true)
+                .visible(false)
                 .build()?;
 
             let shell_builder = WebviewBuilder::new("main", WebviewUrl::App("index.html".into()))
@@ -101,7 +100,6 @@ pub fn run() {
             )?;
 
             apply_window_vibrancy(&main_win, settings.vibrancy, settings.theme);
-            position_on_cursor_monitor(&main_win);
 
             let menu_handle = app.handle().clone();
             main_win.on_menu_event(move |_window, event| {

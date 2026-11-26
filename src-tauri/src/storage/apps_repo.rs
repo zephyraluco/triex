@@ -21,7 +21,7 @@ impl Database {
             tx.execute("DELETE FROM apps_cache", [])?;
             {
                 let mut stmt = tx.prepare(
-                    "INSERT INTO apps_cache
+                    "INSERT OR REPLACE INTO apps_cache
                      (id, kind, name, subtitle, exec_path, exec_args, working_dir, icon_key, keywords_json, updated_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 )?;
@@ -153,5 +153,24 @@ mod tests {
         let second = db.record_item_launch("app:vscode").expect("second launch");
         assert_eq!(first.launch_count, 1);
         assert_eq!(second.launch_count, 2);
+    }
+
+    #[test]
+    fn save_cached_items_should_not_fail_on_duplicate_id() {
+        let db = Database::open_in_memory().expect("in-memory db");
+        let item = RawSearchItem {
+            id: "app:dup".into(),
+            kind: ItemKind::App,
+            name: "App A".into(),
+            subtitle: String::new(),
+            exec_path: "a.lnk".into(),
+            exec_args: String::new(),
+            working_dir: String::new(),
+            icon_key: "dup".into(),
+            keywords: Vec::new(),
+        };
+        db.save_cached_items(&[item.clone(), item])
+            .expect("save should succeed");
+        assert_eq!(db.load_cached_items().expect("load").len(), 1);
     }
 }

@@ -76,14 +76,7 @@ pub fn open_folder_by_id(app: &AppHandle, item_id: &str) -> AppResult<()> {
             .ok_or_else(|| AppError::NotFound(format!("Item '{item_id}' not found")))?
     };
 
-    let target_path =
-        if !raw_item.subtitle.is_empty() && std::path::Path::new(&raw_item.subtitle).exists() {
-            &raw_item.subtitle
-        } else {
-            &raw_item.exec_path
-        };
-
-    reveal_in_explorer(target_path)
+    reveal_in_explorer(&raw_item.exec_path)
 }
 
 pub fn remove_recent_by_id(app: &AppHandle, item_id: &str) -> AppResult<()> {
@@ -208,6 +201,12 @@ pub fn show_main_launcher(app: &AppHandle) -> AppResult<()> {
     window.show()?;
     window.unminimize()?;
     window.set_focus()?;
+    if !state.settings_open()
+        && state.active_plugin().is_none()
+        && let Some(shell_wv) = app.get_webview("main")
+    {
+        let _ = shell_wv.set_focus();
+    }
     let _ = app.emit("triex://launcher-shown", ());
     Ok(())
 }

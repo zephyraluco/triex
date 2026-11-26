@@ -27,18 +27,28 @@ export function useWindowAutoResize(containerRef: RefObject<HTMLDivElement | nul
 
     let rafId = 0;
 
+    const syncNow = () => {
+      const measured = Math.ceil(el.scrollHeight);
+      const clamped = Math.max(MIN_WINDOW_HEIGHT, Math.min(MAX_WINDOW_HEIGHT, measured));
+      if (clamped !== lastHeightRef.current) {
+        lastHeightRef.current = clamped;
+        void ipc.resizeWindow(clamped);
+      }
+    };
+
     const scheduleSync = () => {
+      if (document.visibilityState === "hidden") {
+        // Chromium throttles rAF while hidden (e.g. background startup), so apply directly
+        // to ensure the window already has the right height before its first reveal.
+        syncNow();
+        return;
+      }
       if (rafId !== 0) {
         window.cancelAnimationFrame(rafId);
       }
       rafId = window.requestAnimationFrame(() => {
         rafId = 0;
-        const measured = Math.ceil(el.scrollHeight);
-        const clamped = Math.max(MIN_WINDOW_HEIGHT, Math.min(MAX_WINDOW_HEIGHT, measured));
-        if (clamped !== lastHeightRef.current) {
-          lastHeightRef.current = clamped;
-          void ipc.resizeWindow(clamped);
-        }
+        syncNow();
       });
     };
 

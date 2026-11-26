@@ -18,31 +18,46 @@ pub fn scan_all_items(
 ) -> Vec<RawSearchItem> {
     let mut items = Vec::new();
     let mut seen_names = HashSet::new();
+    let mut seen_ids = HashSet::new();
 
     // 1. Win32 Start Menu & custom dir apps
     for item in win32::scan_win32_apps(custom_dirs) {
-        let dedup_key = item.name.to_lowercase();
-        if seen_names.insert(dedup_key) {
-            items.push(item);
+        let dedup_name = item.name.to_lowercase();
+        if seen_ids.contains(&item.id) || seen_names.contains(&dedup_name) {
+            continue;
         }
+        seen_ids.insert(item.id.clone());
+        seen_names.insert(dedup_name);
+        items.push(item);
     }
 
     // 2. UWP / MSIX apps from shell:AppsFolder
     for item in uwp::scan_uwp_apps() {
-        let dedup_key = item.name.to_lowercase();
-        if seen_names.insert(dedup_key) {
+        let dedup_name = item.name.to_lowercase();
+        if seen_ids.contains(&item.id) || seen_names.contains(&dedup_name) {
+            continue;
+        }
+        seen_ids.insert(item.id.clone());
+        seen_names.insert(dedup_name);
+        items.push(item);
+    }
+
+    // 3. Built-in system commands
+    for item in system_cmd::builtin_system_commands() {
+        if seen_ids.insert(item.id.clone()) {
             items.push(item);
         }
     }
 
-    // 3. Built-in system commands
-    items.extend(system_cmd::builtin_system_commands());
-
     // 4. Installed and enabled plugins
     for plugin in plugins.iter().filter(|p| p.enabled) {
         for feature in &plugin.manifest.features {
+            let id = format!("plugin:{}:{}", plugin.id, feature.code);
+            if !seen_ids.insert(id.clone()) {
+                continue;
+            }
             items.push(RawSearchItem {
-                id: format!("plugin:{}:{}", plugin.id, feature.code),
+                id,
                 kind: ItemKind::Plugin,
                 name: feature.explain.clone(),
                 subtitle: format!("插件 · {}", plugin.name),

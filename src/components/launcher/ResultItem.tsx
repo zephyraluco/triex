@@ -114,7 +114,7 @@ export const ResultItem = memo(function ResultItem({
       value={item.id}
       onSelect={() => onSelect(item)}
       onContextMenu={(e) => onContextMenu(item, e)}
-      title={item.subtitle ? `${item.name}\n${item.subtitle}` : item.name}
+      title={item.name}
       className={cn(
         "flex h-[88px] w-full flex-col items-center justify-center gap-2 rounded-xl px-1.5 py-2 text-center transition-colors cursor-pointer",
         "data-[selected=true]:bg-surface-active data-[selected=true]:text-foreground data-[selected=true]:ring-1 data-[selected=true]:ring-inset data-[selected=true]:ring-border/70",
