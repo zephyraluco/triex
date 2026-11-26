@@ -5,6 +5,8 @@ use tauri::{
 };
 
 #[cfg(windows)]
+mod index;
+#[cfg(windows)]
 mod windows;
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -40,7 +42,7 @@ pub struct SearchPage {
     pub next_offset: Option<u32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchItem {
     pub name: String,
@@ -51,7 +53,7 @@ pub struct SearchItem {
     pub modified_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ItemKind {
     File,
@@ -149,7 +151,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .setup(|app, _| {
             app.manage(Everything {
                 #[cfg(windows)]
-                backend: windows::Worker::new()?,
+                backend: windows::Worker::default(),
             });
             Ok(())
         })

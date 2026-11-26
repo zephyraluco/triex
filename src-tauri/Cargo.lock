@@ -4429,11 +4429,12 @@ dependencies = [
 name = "tauri-plugin-everything"
 version = "0.1.0"
 dependencies = [
- "cc",
  "serde",
  "tauri",
  "tauri-plugin",
  "tokio",
+ "walkdir",
+ "windows 0.58.0",
 ]
 
 [[package]]

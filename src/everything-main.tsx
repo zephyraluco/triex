@@ -54,11 +54,11 @@ declare global {
 const everything = window.triex.everything;
 
 const STATUS_TEXT: Record<Status, string> = {
-  ready: "输入文件名或 Everything 查询，例如 ext:pdf 年报",
-  indexing: "Everything 正在建立索引，请稍后重试。",
-  notRunning: "请启动 Everything 1.4.1 或更新版本，然后重试。",
-  unsupportedPlatform: "Everything 搜索仅支持 Windows。",
-  backendUnavailable: "无法连接兼容的 Everything 实例。",
+  ready: "输入文件名或搜索条件，例如 ext:pdf 年报",
+  indexing: "正在建立本地文件索引…",
+  notRunning: "本地文件索引尚未启动。",
+  unsupportedPlatform: "本地文件索引仅支持 Windows。",
+  backendUnavailable: "无法读取本地文件索引。",
 };
 
 const ERROR_TEXT: Record<string, string> = {
@@ -66,10 +66,10 @@ const ERROR_TEXT: Record<string, string> = {
   indexing: STATUS_TEXT.indexing,
   unsupported_platform: STATUS_TEXT.unsupportedPlatform,
   backend_unavailable: STATUS_TEXT.backendUnavailable,
-  busy: "Everything 正忙，请稍后重试。",
-  timeout: "Everything 响应超时，请重试。",
+  busy: "文件搜索正忙，请稍后重试。",
+  timeout: "文件搜索超时，请重试。",
   stale_result: "搜索结果已失效，请重新查询。",
-  invalid_request: "查询过长或包含无效字符。",
+  invalid_request: "查询格式无效。支持文件名、引号、ext:、path:、file:、folder: 和 !。",
   file_unavailable: "文件已移动、删除或无法访问。",
   open_failed: "Windows 无法执行该文件操作。",
   permission_denied: "本地搜索会话已结束。",
@@ -77,7 +77,7 @@ const ERROR_TEXT: Record<string, string> = {
 
 function describe(error: unknown) {
   const code = (error as { code?: string } | null)?.code;
-  return (code && ERROR_TEXT[code]) || "无法完成 Everything 操作，请重试。";
+  return (code && ERROR_TEXT[code]) || "无法完成本地搜索操作，请重试。";
 }
 
 function EverythingSearch() {
@@ -129,7 +129,11 @@ function EverythingSearch() {
           return;
         }
         const data = await everything.search({ query, sort, offset, limit: PAGE_SIZE }, generation);
-        if (epoch.current === generation) setPage(data);
+        if (epoch.current === generation) {
+          setStatus("ready");
+          setError("");
+          setPage(data);
+        }
       } catch (failure) {
         if (epoch.current === generation) setError(describe(failure));
       }
@@ -188,9 +192,15 @@ function EverythingSearch() {
     setOffset(next);
   }
 
+  useEffect(() => {
+    if (status !== "indexing" && error !== STATUS_TEXT.indexing) return;
+    const retryTimer = window.setTimeout(() => setRetry((value) => value + 1), 2000);
+    return () => window.clearTimeout(retryTimer);
+  }, [status, error, retry]);
+
   const message = error || (page
     ? page.rows.length ? `共 ${page.total} 项` : "未找到文件"
-    : query.trim() ? "正在搜索…" : status ? STATUS_TEXT[status] : "正在检查 Everything…");
+    : query.trim() ? "正在搜索…" : status ? STATUS_TEXT[status] : "正在检查本地文件索引…");
 
   return (
     <main className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
@@ -200,7 +210,7 @@ function EverythingSearch() {
           autoFocus
           value={query}
           onChange={(event) => changeQuery(event.target.value)}
-          placeholder="输入文件名或 Everything 查询"
+          placeholder="输入文件名或搜索条件"
           className="mx-4 mt-4 rounded-md border border-border bg-background px-3 py-2 outline-none focus-visible:ring-2"
         />
       )}

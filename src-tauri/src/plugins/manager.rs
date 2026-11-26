@@ -170,7 +170,7 @@ pub fn open_plugin(
         feature_code: feature_code.to_string(),
         webview_label: label,
         sub_input_placeholder: if builtin {
-            "输入文件名或 Everything 查询".into()
+            "输入文件名或搜索条件".into()
         } else {
             format!("在 {} 中输入...", plugin.name)
         },
