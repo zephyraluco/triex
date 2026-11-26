@@ -5,16 +5,6 @@ use tauri::{
 };
 
 #[cfg(windows)]
-mod index;
-#[cfg(windows)]
-mod journal;
-#[cfg(windows)]
-mod service;
-#[cfg(windows)]
-mod snapshot;
-#[cfg(windows)]
-mod tree;
-#[cfg(windows)]
 mod windows;
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -167,7 +157,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .setup(|app, _| {
             app.manage(Everything {
                 #[cfg(windows)]
-                backend: windows::Worker::default(),
+                backend: windows::Worker::new(app.path().app_local_data_dir()?.join("Everything"))?,
             });
             Ok(())
         })

@@ -1,428 +1,251 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, OnceLock, RwLock},
-    time::Duration,
-};
+use std::{path::Path, ptr, time::Duration};
+use tokio::sync::{mpsc, oneshot};
 
-use crate::{
-    Error, SearchPage, SearchRequest, Status,
-    index::{self, Entry},
-    service,
-    snapshot::Snapshot as NativeSnapshot,
-};
-use tokio::sync::Semaphore;
+use super::{Error, ItemKind, SearchItem, SearchPage, SearchRequest, Sort, Status};
 
-const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const REQUEST_FULL_PATH: u32 = 0x4;
+const REQUEST_SIZE: u32 = 0x10;
+const REQUEST_DATE_MODIFIED: u32 = 0x40;
+const ERROR_IPC: u32 = 2;
 
-type Snapshot = Arc<Vec<Entry>>;
-type IndexState = RwLock<Result<Option<Snapshot>, Error>>;
-
-pub(crate) struct Worker {
-    index: Arc<IndexState>,
-    started: OnceLock<()>,
-    searches: Arc<Semaphore>,
+unsafe extern "system" {
+    fn Everything_GetMajorVersion() -> u32;
+    fn Everything_GetMinorVersion() -> u32;
+    fn Everything_GetRevision() -> u32;
+    fn Everything_IsDBLoaded() -> i32;
+    fn Everything_GetLastError() -> u32;
+    fn Everything_Reset();
+    fn Everything_CleanUp();
+    fn Everything_SetSearchW(query: *const u16);
+    fn Everything_SetMax(max: u32);
+    fn Everything_SetOffset(offset: u32);
+    fn Everything_SetSort(sort: u32);
+    fn Everything_SetRequestFlags(flags: u32);
+    fn Everything_QueryW(wait: i32) -> i32;
+    fn Everything_GetNumResults() -> u32;
+    fn Everything_GetTotResults() -> u32;
+    fn Everything_GetResultFullPathNameW(index: u32, buffer: *mut u16, capacity: u32) -> u32;
+    fn Everything_IsFolderResult(index: u32) -> i32;
+    fn Everything_GetResultSize(index: u32, size: *mut i64) -> i32;
+    fn Everything_GetResultDateModified(index: u32, time: *mut FileTime) -> i32;
 }
 
-impl Default for Worker {
-    fn default() -> Self {
-        Self {
-            index: Arc::new(RwLock::new(Ok(None))),
-            started: OnceLock::new(),
-            searches: Arc::new(Semaphore::new(2)),
-        }
+#[derive(Default)]
+#[repr(C)]
+struct FileTime {
+    low: u32,
+    high: u32,
+}
+
+impl FileTime {
+    fn unix_millis(self) -> Option<i64> {
+        let ticks = (u64::from(self.high) << 32) | u64::from(self.low);
+        (ticks != 0).then(|| (ticks / 10_000) as i64 - 11_644_473_600_000)
     }
 }
+
+type Job = Box<dyn FnOnce() + Send>;
+
+pub struct Worker(mpsc::Sender<Job>);
 
 impl Worker {
-    fn start(&self) {
-        self.started.get_or_init(|| {
-            let index = Arc::downgrade(&self.index);
-            tauri::async_runtime::spawn(async move {
-                let path = snapshot_path();
-                let mut cached = None;
-                while let Some(index) = index.upgrade() {
-                    let result = refresh(&path, &mut cached).await;
-                    if let Ok(mut state) = index.write() {
-                        *state = result.map(Some);
+    pub fn new(directory: std::path::PathBuf) -> std::io::Result<Self> {
+        let (sender, mut receiver) = mpsc::channel::<Job>(4);
+        std::thread::Builder::new()
+            .name("everything-sdk".into())
+            .spawn(move || {
+                let mut child: Option<std::process::Child> = None;
+                while let Some(job) = receiver.blocking_recv() {
+                    if matches!(status(), Status::NotRunning) {
+                        use std::os::windows::process::CommandExt;
+                        let running = child
+                            .as_mut()
+                            .is_some_and(|process| matches!(process.try_wait(), Ok(None)));
+                        if !running && prepare_engine(&directory).is_ok() {
+                            child = std::process::Command::new(directory.join("Everything.exe"))
+                                .arg("-startup")
+                                .current_dir(&directory)
+                                .creation_flags(0x08000000)
+                                .spawn()
+                                .ok();
+                        }
                     }
-                    drop(index);
-                    tokio::time::sleep(REFRESH_INTERVAL).await;
+                    job();
                 }
-            });
-        });
+                // All SDK state is owned by this worker.
+                unsafe { Everything_CleanUp() };
+            })?;
+        Ok(Self(sender))
     }
 
-    fn snapshot(&self) -> Result<Option<Snapshot>, Error> {
-        self.start();
-        self.index
-            .read()
-            .map_err(|_| Error::BackendUnavailable)?
-            .clone()
-    }
-
-    pub(crate) async fn status(&self) -> Result<Status, Error> {
-        match self.snapshot() {
-            Ok(Some(_)) => Ok(Status::Ready),
-            Ok(None) => Ok(Status::Indexing),
-            Err(Error::NotRunning) => Ok(Status::NotRunning),
-            Err(Error::SnapshotMissing) => Ok(Status::SnapshotMissing),
-            Err(Error::SnapshotUnsupported) => Ok(Status::SnapshotUnsupported),
-            Err(Error::SnapshotStale) => Ok(Status::SnapshotStale),
-            Err(Error::ServiceIncompatible) => Ok(Status::ServiceIncompatible),
-            Err(_) => Ok(Status::BackendUnavailable),
-        }
-    }
-
-    pub(crate) async fn search(&self, request: SearchRequest) -> Result<SearchPage, Error> {
-        let snapshot = self.snapshot()?.ok_or(Error::Indexing)?;
-        let permit = self
-            .searches
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Error::Busy)?;
-        let work = tauri::async_runtime::spawn_blocking(move || {
-            let _permit = permit;
-            index::search(&snapshot, request)
-        });
-        tokio::time::timeout(Duration::from_secs(3), work)
+    async fn submit<T: Send + 'static>(
+        &self,
+        run: impl FnOnce() -> Result<T, Error> + Send + 'static,
+    ) -> Result<T, Error> {
+        let (send, receive) = oneshot::channel();
+        self.0
+            .try_send(Box::new(move || {
+                if !send.is_closed() {
+                    let _ = send.send(run());
+                }
+            }))
+            .map_err(|err| match err {
+                mpsc::error::TrySendError::Full(_) => Error::Busy,
+                mpsc::error::TrySendError::Closed(_) => Error::BackendUnavailable,
+            })?;
+        tokio::time::timeout(Duration::from_secs(3), receive)
             .await
             .map_err(|_| Error::Timeout)?
             .map_err(|_| Error::BackendUnavailable)?
     }
-}
 
-struct Cached {
-    modified: std::time::SystemTime,
-    len: u64,
-    snapshot: NativeSnapshot,
-    entries: Snapshot,
-}
-
-fn snapshot_path() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("TRIEX_EVERYTHING_DB") {
-        return Some(path.into());
+    pub async fn status(&self) -> Result<Status, Error> {
+        self.submit(|| Ok(status())).await
     }
-    Some(
-        PathBuf::from(std::env::var_os("APPDATA")?)
-            .join("Everything")
-            .join("Everything.db"),
-    )
+
+    pub async fn search(&self, request: SearchRequest) -> Result<SearchPage, Error> {
+        self.submit(move || search(request)).await
+    }
 }
 
-async fn refresh(path: &Option<PathBuf>, cached: &mut Option<Cached>) -> Result<Snapshot, Error> {
-    let path = path.as_ref().ok_or(Error::SnapshotMissing)?;
-    let expected = match identity(path) {
-        Ok(identity) => Some(identity),
-        Err(Error::SnapshotMissing) => None,
-        Err(error) => return Err(error),
-    };
-    if cached
-        .as_ref()
-        .is_none_or(|cache| expected != Some((cache.modified, cache.len)))
-    {
-        let snapshot = if let Some(identity) = expected {
-            let path = path.to_owned();
-            tauri::async_runtime::spawn_blocking(move || load(&path, identity))
-                .await
-                .map_err(|_| Error::BackendUnavailable)??
+fn status() -> Status {
+    // The IPC API returns zero when it cannot reach the Everything search client.
+    unsafe {
+        let major = Everything_GetMajorVersion();
+        if major == 0 {
+            return if Everything_GetLastError() == ERROR_IPC {
+                Status::NotRunning
+            } else {
+                Status::BackendUnavailable
+            };
+        }
+        if (
+            major,
+            Everything_GetMinorVersion(),
+            Everything_GetRevision(),
+        ) < (1, 4, 1)
+        {
+            return Status::BackendUnavailable;
+        }
+        if Everything_IsDBLoaded() != 0 {
+            Status::Ready
+        } else if Everything_GetLastError() == ERROR_IPC {
+            Status::NotRunning
         } else {
-            service::rebuild().await?
-        };
-        *cached = Some(
-            match synchronize(path, expected, snapshot, expected.is_none()).await {
-                Err(Error::SnapshotStale) if expected.is_some() => {
-                    synchronize(path, expected, service::rebuild().await?, true).await?
-                }
-                result => result?,
-            },
-        );
-    } else {
-        let mut pending = Vec::new();
-        for volume in &cached
-            .as_ref()
-            .ok_or(Error::BackendUnavailable)?
-            .snapshot
-            .volumes
-        {
-            match service::updates(volume).await {
-                Ok(batch) => pending.push(batch),
-                Err(Error::SnapshotStale) => {
-                    let rebuilt = service::rebuild().await?;
-                    *cached = Some(synchronize(path, expected, rebuilt, true).await?);
-                    return Ok(cached
-                        .as_ref()
-                        .ok_or(Error::BackendUnavailable)?
-                        .entries
-                        .clone());
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        if pending
-            .iter()
-            .zip(
-                &cached
-                    .as_ref()
-                    .ok_or(Error::BackendUnavailable)?
-                    .snapshot
-                    .volumes,
-            )
-            .any(|((next, _), volume)| *next != volume.start_usn)
-        {
-            let mut snapshot = cached.take().ok_or(Error::BackendUnavailable)?.snapshot;
-            let persist = has_disk_changes(path, &snapshot, &pending)?;
-            match apply_changes(&mut snapshot, pending) {
-                Ok(()) => *cached = Some(publish(path, expected, snapshot, persist).await?),
-                Err(Error::SnapshotStale) => {
-                    let rebuilt = service::rebuild().await?;
-                    *cached = Some(synchronize(path, expected, rebuilt, true).await?);
-                }
-                Err(error) => return Err(error),
-            }
+            Status::Indexing
         }
     }
-    Ok(cached
-        .as_ref()
-        .ok_or(Error::BackendUnavailable)?
-        .entries
-        .clone())
 }
 
-type Identity = (std::time::SystemTime, u64);
-
-fn identity(path: &std::path::Path) -> Result<Identity, Error> {
-    let metadata = std::fs::metadata(path).map_err(file_error)?;
-    Ok((metadata.modified().map_err(file_error)?, metadata.len()))
-}
-
-fn load(path: &std::path::Path, expected: Identity) -> Result<NativeSnapshot, Error> {
-    if expected.1 > 512 * 1024 * 1024 {
-        return Err(Error::SnapshotUnsupported);
+fn search(request: SearchRequest) -> Result<SearchPage, Error> {
+    match status() {
+        Status::Ready => {}
+        Status::NotRunning => return Err(Error::NotRunning),
+        Status::Indexing => return Err(Error::Indexing),
+        _ => return Err(Error::BackendUnavailable),
     }
-    let bytes = std::fs::read(path).map_err(file_error)?;
-    if identity(path)? != expected {
-        return Err(Error::Busy);
-    }
-    NativeSnapshot::decode(&bytes)
-}
 
-async fn synchronize(
-    path: &std::path::Path,
-    expected: Option<Identity>,
-    mut snapshot: NativeSnapshot,
-    force_save: bool,
-) -> Result<Cached, Error> {
-    let mut pending = Vec::new();
-    for volume in &snapshot.volumes {
-        pending.push(service::updates(volume).await?);
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            unsafe { Everything_Reset() };
+        }
     }
-    if !force_save
-        && expected.is_some()
-        && pending
-            .iter()
-            .zip(&snapshot.volumes)
-            .all(|((next, _), volume)| *next == volume.start_usn)
-    {
-        let (modified, len) = expected.ok_or(Error::BackendUnavailable)?;
-        return Ok(Cached {
-            modified,
-            len,
-            entries: Arc::new(snapshot.entries()?),
-            snapshot,
+
+    let _reset = Reset;
+    let query: Vec<_> = request.query.encode_utf16().chain([0]).collect();
+    let limit = request.limit.unwrap_or(50);
+    // The SDK retains query/result state between calls. Only the worker accesses it.
+    unsafe {
+        Everything_SetSearchW(query.as_ptr());
+        Everything_SetMax(limit);
+        Everything_SetOffset(request.offset);
+        Everything_SetSort(match request.sort {
+            Sort::NameAscending => 1,
+            Sort::NameDescending => 2,
+            Sort::PathAscending => 3,
+            Sort::PathDescending => 4,
+            Sort::SizeAscending => 5,
+            Sort::SizeDescending => 6,
+            Sort::ModifiedAscending => 13,
+            Sort::ModifiedDescending => 14,
         });
-    }
-    let persist = force_save || expected.is_none() || has_disk_changes(path, &snapshot, &pending)?;
-    apply_changes(&mut snapshot, pending)?;
-    publish(path, expected, snapshot, persist).await
-}
+        Everything_SetRequestFlags(REQUEST_FULL_PATH | REQUEST_SIZE | REQUEST_DATE_MODIFIED);
 
-fn has_disk_changes(
-    path: &std::path::Path,
-    snapshot: &NativeSnapshot,
-    pending: &[(u64, Vec<crate::journal::Change>)],
-) -> Result<bool, Error> {
-    let Some(parent) = path.parent() else {
-        return Err(Error::BackendUnavailable);
-    };
-    let filename = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or(Error::BackendUnavailable)?;
-    let backup = path.with_extension("db.triex-backup");
-    let backup_name = backup
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or(Error::BackendUnavailable)?;
-    let parent = parent.to_string_lossy();
-    for ((_, changes), (volume, tree)) in pending
-        .iter()
-        .zip(snapshot.volumes.iter().zip(&snapshot.trees))
-    {
-        if changes.is_empty() {
-            continue;
+        if Everything_QueryW(1) == 0 {
+            return Err(if Everything_GetLastError() == ERROR_IPC {
+                Error::NotRunning
+            } else {
+                Error::BackendUnavailable
+            });
         }
-        if changes.iter().any(|change| {
-            !change.name.eq_ignore_ascii_case(filename)
-                && !change.name.eq_ignore_ascii_case(backup_name)
-                && !change.name.starts_with(".triex-everything-")
-        }) {
-            return Ok(true);
-        }
-        let paths = tree.paths(&volume.drive)?;
-        if changes.iter().any(|change| {
-            paths
-                .get(&change.parent)
-                .is_none_or(|directory| !directory.eq_ignore_ascii_case(&parent))
-        }) {
-            return Ok(true);
-        }
-    }
-    // Saving creates USN records for the database, backup and staging file.
-    // Consume those records in memory without starting another save.
-    Ok(false)
-}
-
-fn apply_changes(
-    snapshot: &mut NativeSnapshot,
-    pending: Vec<(u64, Vec<crate::journal::Change>)>,
-) -> Result<(), Error> {
-    for ((volume, tree), (next, changes)) in snapshot
-        .volumes
-        .iter_mut()
-        .zip(&mut snapshot.trees)
-        .zip(pending)
-    {
-        if !changes.is_empty() {
-            tree.replay(volume, changes)?;
-        }
-        volume.start_usn = next;
-    }
-    Ok(())
-}
-
-async fn publish(
-    path: &std::path::Path,
-    expected: Option<Identity>,
-    snapshot: NativeSnapshot,
-    persist: bool,
-) -> Result<Cached, Error> {
-    let path = path.to_owned();
-    tauri::async_runtime::spawn_blocking(move || {
-        let entries = Arc::new(snapshot.entries()?);
-        let (modified, len) = if persist {
-            save(&path, expected, &snapshot)?;
-            identity(&path)?
-        } else {
-            expected.ok_or(Error::BackendUnavailable)?
-        };
-        Ok(Cached {
-            modified,
-            len,
-            entries,
-            snapshot,
-        })
-    })
-    .await
-    .map_err(|_| Error::BackendUnavailable)?
-}
-
-fn save(
-    path: &std::path::Path,
-    expected: Option<Identity>,
-    snapshot: &NativeSnapshot,
-) -> Result<(), Error> {
-    use std::io::{BufWriter, Write};
-    let parent = path.parent().ok_or(Error::BackendUnavailable)?;
-    std::fs::create_dir_all(parent).map_err(file_error)?;
-    let mut temporary = tempfile::Builder::new()
-        .prefix(".triex-everything-")
-        .tempfile_in(parent)
-        .map_err(file_error)?;
-    {
-        let mut writer = BufWriter::new(temporary.as_file_mut());
-        snapshot.write_to(&mut writer).map_err(file_error)?;
-        writer.flush().map_err(file_error)?;
-    }
-    temporary.as_file().sync_all().map_err(file_error)?;
-    if let Some(expected) = expected {
-        if identity(path)? != expected {
-            return Err(Error::Busy);
-        }
-        let backup = path.with_extension("db.triex-backup");
-        if !backup.exists() {
-            let mut copy = tempfile::Builder::new()
-                .prefix(".triex-everything-")
-                .tempfile_in(parent)
-                .map_err(file_error)?;
-            let mut source = std::fs::File::open(path).map_err(file_error)?;
-            std::io::copy(&mut source, copy.as_file_mut()).map_err(file_error)?;
-            copy.as_file().sync_all().map_err(file_error)?;
-            match copy.persist_noclobber(&backup) {
-                Ok(_) => {}
-                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(file_error(error.error)),
+        let count = Everything_GetNumResults().min(limit);
+        let total = Everything_GetTotResults();
+        let mut items = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let len = Everything_GetResultFullPathNameW(index, ptr::null_mut(), 0);
+            if len == 0 || len >= 32_768 {
+                continue;
             }
+            let mut path = vec![0; len as usize + 1];
+            if Everything_GetResultFullPathNameW(index, path.as_mut_ptr(), len + 1) != len {
+                continue;
+            }
+            let Ok(path) = String::from_utf16(&path[..len as usize]) else {
+                continue;
+            };
+            let name = Path::new(&path)
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .unwrap_or(&path)
+                .to_owned();
+            let is_folder = Everything_IsFolderResult(index) != 0;
+            let mut size = 0;
+            let mut modified = FileTime::default();
+            items.push(SearchItem {
+                name,
+                path,
+                kind: if is_folder {
+                    ItemKind::Folder
+                } else {
+                    ItemKind::File
+                },
+                size_bytes: (!is_folder && Everything_GetResultSize(index, &mut size) != 0)
+                    .then(|| u64::try_from(size).ok())
+                    .flatten(),
+                modified_at: (Everything_GetResultDateModified(index, &mut modified) != 0)
+                    .then(|| modified.unix_millis())
+                    .flatten(),
+            });
         }
-        if identity(path)? != expected {
-            return Err(Error::Busy);
+        let next = request.offset + count;
+        Ok(SearchPage {
+            items,
+            total,
+            next_offset: (count > 0 && next < total).then_some(next),
+        })
+    }
+}
+
+fn prepare_engine(directory: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(directory)?;
+    let executable = directory.join("Everything.exe");
+    let bytes = include_bytes!("../assets/Everything.exe");
+    if std::fs::read(&executable).ok().as_deref() != Some(bytes.as_slice()) {
+        std::fs::write(executable, bytes)?;
+    }
+    let config = directory.join("Everything.ini");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(config)
+    {
+        Ok(mut file) => {
+            use std::io::Write;
+            file.write_all(include_bytes!("../assets/Everything.ini"))?;
         }
-        temporary.persist(path).map_err(|e| file_error(e.error))?;
-    } else {
-        temporary
-            .persist_noclobber(path)
-            .map_err(|e| file_error(e.error))?;
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
     }
     Ok(())
-}
-
-fn file_error(error: std::io::Error) -> Error {
-    if error.kind() == std::io::ErrorKind::NotFound {
-        Error::SnapshotMissing
-    } else {
-        Error::BackendUnavailable
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        snapshot::Volume,
-        tree::{Folder, Tree},
-    };
-
-    #[test]
-    fn creates_without_clobbering_and_backs_up_before_replacing() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("Everything.db");
-        let volume = Volume {
-            guid: r"\\?\Volume{11111111-1111-1111-1111-111111111111}".into(),
-            drive: "C:".into(),
-            journal_id: 1,
-            start_usn: 7,
-        };
-        let mut tree = Tree::default();
-        tree.folders.insert(
-            5,
-            Folder {
-                parent: None,
-                name: "C:".into(),
-                modified: 0,
-            },
-        );
-        let mut snapshot = NativeSnapshot {
-            volumes: vec![volume],
-            trees: vec![tree],
-        };
-        save(&path, None, &snapshot).unwrap();
-        let old = std::fs::read(&path).unwrap();
-        assert!(save(&path, None, &snapshot).is_err());
-        let expected = identity(&path).unwrap();
-        snapshot.volumes[0].start_usn = 19;
-        save(&path, Some(expected), &snapshot).unwrap();
-        let backup = std::fs::read(path.with_extension("db.triex-backup")).unwrap();
-        assert_eq!(old, backup);
-        let result = NativeSnapshot::decode(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(result.volumes[0].start_usn, 19);
-    }
 }
