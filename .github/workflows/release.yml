@@ -39,7 +39,7 @@ jobs:
           cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
           cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Build and create draft GitHub Release
+      - name: Build and publish GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -48,7 +48,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: "Triex v__VERSION__"
-          releaseBody: "请在此补充本版本的更新内容。安装前建议查看变更说明。"
-          releaseDraft: true
+          generateReleaseNotes: true
+          releaseDraft: false
           prerelease: false
           args: --bundles nsis
