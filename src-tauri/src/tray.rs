@@ -8,7 +8,7 @@ use crate::commands::settings::open_settings_window;
 use crate::error::AppResult;
 
 pub fn setup_tray(app: &AppHandle) -> AppResult<()> {
-    let show_item = MenuItem::with_id(app, "show", "显示启动器 (Alt+Space)", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, "show", "显示 / 隐藏启动器", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "偏好设置...", true, None::<&str>)?;
     let rebuild_item = MenuItem::with_id(app, "rebuild", "重建应用索引", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出 Triex", true, None::<&str>)?;

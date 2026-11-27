@@ -5,6 +5,7 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::commands::settings::destroy_settings_webview;
 use crate::error::{AppError, AppResult};
+use crate::platform::launch::open_directory;
 use crate::plugins::{manager::close_all_cached_plugin_webviews, permission::require_host_webview};
 use crate::state::AppState;
 
@@ -137,20 +138,5 @@ fn cleanup_before_update_exit(app: &AppHandle) {
 #[tauri::command]
 pub fn open_data_dir(webview: Webview, state: State<'_, AppState>) -> AppResult<()> {
     require_host_webview(&webview)?;
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer.exe")
-            .arg(&state.paths.data_dir)
-            .spawn()?;
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = &state.paths.data_dir;
-        Err(AppError::Platform(
-            "Opening data directory is only implemented on Windows".to_string(),
-        ))
-    }
+    open_directory(&state.paths.data_dir)
 }

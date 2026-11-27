@@ -7,11 +7,9 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
-use crate::commands::launcher::{
-    show_main_launcher, toggle_main_launcher, HEADER_LOGICAL_HEIGHT, LAUNCHER_LOGICAL_WIDTH,
-};
+use crate::commands::launcher::{show_main_launcher, toggle_main_launcher};
 use crate::commands::search::{refresh_directory_watcher, trigger_rebuild_index};
-use crate::config::{AppSettings, SettingsPatch};
+use crate::config::{AppSettings, SettingsPatch, HEADER_LOGICAL_HEIGHT, LAUNCHER_LOGICAL_WIDTH};
 use crate::error::{AppError, AppResult};
 use crate::platform::window::{
     apply_window_vibrancy, set_logical_height, set_shell_webview_bounds,

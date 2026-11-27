@@ -395,27 +395,29 @@ where
 }
 
 fn forward_backend_event(app: &AppHandle, plugin_id: &str, event_name: &str, payload: &Value) {
-    let state = app.state::<AppState>();
-    let target_label = state
-        .active_plugin()
-        .filter(|s| s.plugin_id == plugin_id)
-        .map(|s| s.webview_label);
-
-    let Some(label) = target_label else {
-        return;
-    };
-    let Some(wv) = app.get_webview(&label) else {
-        return;
-    };
-
-    if let Ok(detail_json) = serde_json::to_string(&json!({
+    let Ok(detail_json) = serde_json::to_string(&json!({
         "event": event_name,
         "payload": payload,
-    })) {
-        let script = format!(
-            "window.dispatchEvent(new CustomEvent('triex:backend-event', {{ detail: {detail_json} }}));"
-        );
+    })) else {
+        return;
+    };
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('triex:backend-event', {{ detail: {detail_json} }}));"
+    );
+
+    let state = app.state::<AppState>();
+    if let Some(label) = state
+        .active_plugin()
+        .filter(|s| s.plugin_id == plugin_id)
+        .map(|s| s.webview_label)
+        && let Some(wv) = app.get_webview(&label)
+    {
         let _ = wv.eval(&script);
+    }
+
+    let detached_label = format!("plugin-detached-{plugin_id}");
+    if let Some(detached_win) = app.get_webview_window(&detached_label) {
+        let _ = detached_win.eval(&script);
     }
 }
 

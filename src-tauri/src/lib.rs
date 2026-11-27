@@ -164,7 +164,7 @@ pub fn run() {
                         tokio::time::sleep(std::time::Duration::from_millis(35)).await;
                         let st = h.state::<AppState>();
                         if !st.current_settings().hide_on_blur
-                            || st.context_menu_open.load(Ordering::SeqCst)
+                            || st.is_blur_suppressed()
                             || !st.is_shown.load(Ordering::SeqCst)
                         {
                             return;
@@ -234,7 +234,6 @@ pub fn run() {
             commands::plugin::list_plugins,
             commands::plugin::pick_and_install_plugin,
             commands::plugin::install_plugin_path,
-            commands::plugin::install_plugin_dir,
             commands::plugin::uninstall_plugin,
             commands::plugin::reload_plugins,
             commands::plugin::open_plugins_dir,
@@ -261,6 +260,11 @@ pub fn run() {
             commands::updater::install_update,
             commands::updater::open_data_dir,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running triex application");
+        .build(tauri::generate_context!())
+        .expect("error while building triex application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                app_handle.state::<AppState>().plugin_backends.stop_all();
+            }
+        });
 }

@@ -7,13 +7,12 @@ use tauri::{
 };
 
 use crate::commands::settings::close_settings_view;
+use crate::config::{HEADER_LOGICAL_HEIGHT, LAUNCHER_LOGICAL_WIDTH};
 use crate::error::{AppError, AppResult};
 use crate::platform::window::{set_logical_height, set_shell_webview_bounds};
 use crate::state::{AppState, CachedPluginWebview};
 
 const PLUGIN_BRIDGE_JS: &str = include_str!("../../resources/plugin-bridge.js");
-const LAUNCHER_WIDTH: f64 = 800.0;
-const HEADER_HEIGHT: f64 = 64.0;
 const PLUGIN_KEEP_ALIVE_SECS: u64 = 60;
 static PLUGIN_VIEW_SEQ: AtomicU64 = AtomicU64::new(1);
 static PLUGIN_EVICT_EPOCH: AtomicU64 = AtomicU64::new(1);
@@ -63,10 +62,8 @@ pub fn open_plugin(
     feature_code: &str,
 ) -> AppResult<ActivePluginSession> {
     let state = app.state::<AppState>();
-    let plugins = state.db.list_plugins()?;
-    let plugin = plugins
-        .into_iter()
-        .find(|p| p.id == plugin_id && p.enabled)
+    let plugin = state
+        .get_enabled_plugin(plugin_id)
         .ok_or_else(|| AppError::NotFound(format!("Plugin '{plugin_id}' not found or disabled")))?;
 
     close_settings_view(app);
@@ -95,8 +92,8 @@ pub fn open_plugin(
 
     let (label, is_loading) = if let Some(existing_label) = reused_label {
         if let Some(wv) = app.get_webview(&existing_label) {
-            let _ = wv.set_position(LogicalPosition::new(0.0, HEADER_HEIGHT));
-            let _ = wv.set_size(LogicalSize::new(LAUNCHER_WIDTH, plugin_height));
+            let _ = wv.set_position(LogicalPosition::new(0.0, HEADER_LOGICAL_HEIGHT));
+            let _ = wv.set_size(LogicalSize::new(LAUNCHER_LOGICAL_WIDTH, plugin_height));
             let _ = wv.show();
             let _ = wv.set_focus();
             if let Ok(code_json) = serde_json::to_string(feature_code) {
@@ -134,8 +131,8 @@ pub fn open_plugin(
         let _child = main_window
             .add_child(
                 builder,
-                LogicalPosition::new(0.0, HEADER_HEIGHT),
-                LogicalSize::new(LAUNCHER_WIDTH, plugin_height),
+                LogicalPosition::new(0.0, HEADER_LOGICAL_HEIGHT),
+                LogicalSize::new(LAUNCHER_LOGICAL_WIDTH, plugin_height),
             )
             .map_err(|err| {
                 tracing::error!("Failed to add child plugin webview '{new_label}': {err}");
@@ -156,8 +153,12 @@ pub fn open_plugin(
     };
 
     // Shrink the primary shell webview to header-only so it never overlaps the plugin webview.
-    set_shell_webview_bounds(app, LAUNCHER_WIDTH, HEADER_HEIGHT);
-    set_logical_height(&main_window, LAUNCHER_WIDTH, HEADER_HEIGHT + plugin_height);
+    set_shell_webview_bounds(app, LAUNCHER_LOGICAL_WIDTH, HEADER_LOGICAL_HEIGHT);
+    set_logical_height(
+        &main_window,
+        LAUNCHER_LOGICAL_WIDTH,
+        HEADER_LOGICAL_HEIGHT + plugin_height,
+    );
 
     let session = ActivePluginSession {
         plugin_id: plugin.id.clone(),
@@ -190,6 +191,10 @@ pub fn evict_plugin_webview(app: &AppHandle, plugin_id: &str) {
         && let Some(wv) = app.get_webview(&entry.label)
     {
         let _ = wv.close();
+    }
+    let detached_label = format!("plugin-detached-{plugin_id}");
+    if let Some(win) = app.get_webview_window(&detached_label) {
+        let _ = win.close();
     }
 }
 
@@ -259,10 +264,7 @@ pub fn close_active_plugin(app: &AppHandle) -> AppResult<()> {
         });
 
         let idle_secs = state
-            .db
-            .list_plugins()
-            .ok()
-            .and_then(|list| list.into_iter().find(|p| p.id == session.plugin_id))
+            .get_enabled_plugin(&session.plugin_id)
             .and_then(|p| p.manifest.backend.map(|b| b.idle_timeout_secs))
             .unwrap_or(PLUGIN_KEEP_ALIVE_SECS);
         state
@@ -286,10 +288,8 @@ pub fn detach_active_plugin(app: &AppHandle) -> AppResult<()> {
     let existing = state.active_plugin()
         .ok_or_else(|| AppError::NotFound("No active plugin to detach".to_string()))?;
 
-    let plugins = state.db.list_plugins()?;
-    let plugin = plugins
-        .into_iter()
-        .find(|p| p.id == existing.plugin_id)
+    let plugin = state
+        .get_enabled_plugin(&existing.plugin_id)
         .ok_or_else(|| AppError::NotFound(format!("Plugin '{}' not found", existing.plugin_id)))?;
 
     close_settings_view(app);
@@ -309,7 +309,7 @@ pub fn detach_active_plugin(app: &AppHandle) -> AppResult<()> {
 
     WebviewWindowBuilder::new(app, &detached_label, WebviewUrl::External(parsed_url))
         .title(&plugin.name)
-        .inner_size(LAUNCHER_WIDTH, plugin.manifest.height.clamp(360.0, 800.0))
+        .inner_size(LAUNCHER_LOGICAL_WIDTH, plugin.manifest.height.clamp(360.0, 800.0))
         .initialization_script(&init_script)
         .center()
         .build()?;

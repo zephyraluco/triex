@@ -196,6 +196,14 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
     void ipc.forwardSubInputValue(value);
   };
 
+  const handleSubInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Enter" || event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      void ipc.forwardSubInputKeydown(event.key, event.shiftKey);
+    }
+  };
+
   const handlePaste = (event: ClipboardEvent<HTMLInputElement>) => {
     const items = event.clipboardData?.items;
     if (!items) return;
@@ -326,6 +334,7 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             ref={inputRef}
             value={subInput}
             onChange={(e) => handleSubInputChange(e.target.value)}
+            onKeyDown={handleSubInputKeyDown}
             onMouseDown={(e) => handleInputMouseDown(e, subInput)}
             placeholder={activePlugin.subInputPlaceholder || "输入插件指令..."}
             autoFocus

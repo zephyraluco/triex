@@ -1,15 +1,21 @@
 use crate::error::{AppError, AppResult};
-use crate::storage::Database;
+use crate::state::AppState;
+
+/// Returns true if the webview is a trusted host webview (`main` or `settings-view:*`).
+pub fn is_host_webview(webview: &tauri::Webview) -> bool {
+    let label = webview.label();
+    label == "main" || label.starts_with("settings-view:")
+}
 
 /// Ensures the caller is a trusted host webview (`main` or `settings-view:*`),
 /// preventing sandboxed `plugin-*` webviews from invoking privileged host commands.
 pub fn require_host_webview(webview: &tauri::Webview) -> AppResult<()> {
-    let label = webview.label();
-    if label == "main" || label.starts_with("settings-view:") {
+    if is_host_webview(webview) {
         Ok(())
     } else {
         Err(AppError::PermissionDenied(format!(
-            "Plugin webview '{label}' is not permitted to invoke host command"
+            "Plugin webview '{}' is not permitted to invoke host command",
+            webview.label()
         )))
     }
 }
@@ -30,12 +36,11 @@ pub fn plugin_id_from_label(label: &str) -> AppResult<&str> {
     Ok(id)
 }
 
-/// Verifies that the plugin has explicitly declared the required permission in `plugin.json`.
-pub fn require_permission(db: &Database, plugin_id: &str, permission: &str) -> AppResult<()> {
-    let plugins = db.list_plugins()?;
-    let plugin = plugins
-        .into_iter()
-        .find(|p| p.id == plugin_id && p.enabled)
+/// Verifies in O(1) via the in-memory plugin cache that the plugin is enabled
+/// and has explicitly declared the required permission in `plugin.json`.
+pub fn require_permission(state: &AppState, plugin_id: &str, permission: &str) -> AppResult<()> {
+    let plugin = state
+        .get_enabled_plugin(plugin_id)
         .ok_or_else(|| AppError::NotFound(format!("Enabled plugin '{plugin_id}' not found")))?;
 
     if plugin.manifest.permissions.iter().any(|p| p == permission) {

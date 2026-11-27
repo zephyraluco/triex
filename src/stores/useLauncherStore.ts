@@ -4,6 +4,7 @@ import {
   type ActivePluginSession,
   type SearchResultItem,
 } from "@/lib/ipc";
+import { resolveFirstVisibleItemId } from "@/lib/launcherSections";
 
 export interface PastedAttachment {
   kind: "image" | "text" | "file";
@@ -53,34 +54,6 @@ interface LauncherState {
   resetSearch: () => void;
 }
 
-function resolveDefaultSelectedId(
-  items: SearchResultItem[],
-  resultQuery: string,
-  pinnedItems: string[],
-  showDashboard: boolean,
-): string {
-  if (resultQuery.trim().length > 0) {
-    return items[0]?.id ?? "";
-  }
-  const byId = new Map(items.map((item) => [item.id, item]));
-  for (const id of pinnedItems) {
-    if (byId.has(id)) return id;
-  }
-  const pinnedSet = new Set(pinnedItems);
-  const firstRecent = items.find((item) => !pinnedSet.has(item.id) && item.score > 0);
-  if (firstRecent) return firstRecent.id;
-
-  if (showDashboard) {
-    const firstApp = items.find((item) => item.kind === "app" || item.kind === "uwpApp");
-    if (firstApp) return firstApp.id;
-    const firstPlugin = items.find((item) => item.kind === "plugin");
-    if (firstPlugin) return firstPlugin.id;
-    const firstCmd = items.find((item) => item.kind === "systemCmd");
-    if (firstCmd) return firstCmd.id;
-  }
-  return "";
-}
-
 export const useLauncherStore = create<LauncherState>((set) => ({
   query: "",
   resultQuery: "",
@@ -104,7 +77,7 @@ export const useLauncherStore = create<LauncherState>((set) => ({
       const preserveSelection = options?.preserveSelection ?? false;
       const stillExists =
         preserveSelection && items.some((item) => item.id === state.selectedId);
-      const defaultSelectedId = resolveDefaultSelectedId(
+      const defaultSelectedId = resolveFirstVisibleItemId(
         items,
         resultQuery,
         state.pinnedItems,

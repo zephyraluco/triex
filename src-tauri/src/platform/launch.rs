@@ -28,6 +28,23 @@ pub fn reveal_in_explorer(path: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Opens a directory directly inside Windows File Explorer (creating it if needed).
+pub fn open_directory(path: &Path) -> AppResult<()> {
+    std::fs::create_dir_all(path)?;
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer.exe").arg(path).spawn()?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err(AppError::Platform(format!(
+            "Opening directory '{}' is only implemented on Windows",
+            path.display()
+        )))
+    }
+}
+
 #[cfg(windows)]
 fn launch_win32(exec_path: &str, args: &str, working_dir: &str, as_admin: bool) -> AppResult<()> {
     use windows::core::PCWSTR;

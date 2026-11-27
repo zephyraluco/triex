@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppResult;
 
+pub const LAUNCHER_LOGICAL_WIDTH: f64 = 800.0;
+pub const HEADER_LOGICAL_HEIGHT: f64 = 64.0;
+
 /// Only supplied fields are merged into the authoritative backend snapshot.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

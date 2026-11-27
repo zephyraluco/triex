@@ -159,10 +159,6 @@ export const ipc = {
     return invoke("install_plugin_path", { sourcePath });
   },
 
-  installPluginDir(sourceDir: string): Promise<PluginManifest> {
-    return invoke("install_plugin_dir", { sourceDir });
-  },
-
   uninstallPlugin(pluginId: string): Promise<void> {
     return invoke("uninstall_plugin", { pluginId });
   },

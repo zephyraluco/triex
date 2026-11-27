@@ -82,7 +82,7 @@ pub async fn trigger_rebuild_index(app: &AppHandle) -> AppResult<IndexStatus> {
             tokio::task::spawn_blocking(move || -> AppResult<_> {
                 let state = handle.state::<AppState>();
                 sync_installed_plugins(&paths, &state.db)?;
-                let plugins = state.db.list_plugins()?;
+                let plugins = state.refresh_plugins_cache()?;
                 let scanned = scan_all_items(&settings.custom_scan_dirs, &plugins);
                 let usage = state.db.load_all_usage()?;
                 let mut engine = crate::search::SearchEngine::new();
