@@ -484,62 +484,104 @@ pub async fn exec_plugin_command(
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        #[cfg(windows)]
+        let job = windows_job::JobGuard::new()
+            .ok_or_else(|| AppError::Platform("Could not create command job object".into()))?;
+
         let mut child = cmd.spawn().map_err(|err| {
             AppError::Plugin(format!("Failed to execute '{resolved_program}': {err}"))
         })?;
+        #[cfg(windows)]
+        if !job.assign_child(&child) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::Platform("Could not assign command to job object".into()));
+        }
 
-        let mut stdout = child.stdout.take().expect("stdout was piped");
-        let mut stderr = child.stderr.take().expect("stderr was piped");
-        std::thread::scope(|scope| {
-            let stdout_reader = scope.spawn(move || {
-                let mut output = Vec::new();
-                stdout.read_to_end(&mut output)?;
-                Ok::<_, std::io::Error>(output)
-            });
-            let stderr_reader = scope.spawn(move || {
-                let mut output = Vec::new();
-                stderr.read_to_end(&mut output)?;
-                Ok::<_, std::io::Error>(output)
-            });
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+        let (tx, rx) = std::sync::mpsc::channel();
+        spawn_output_reader(stdout, true, tx.clone());
+        spawn_output_reader(stderr, false, tx);
 
-            let deadline = std::time::Instant::now() + Duration::from_millis(limit_ms);
-            let (exit_code, timed_out) = loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => break (status.code().unwrap_or(-1), false),
-                    Ok(None) if std::time::Instant::now() < deadline => {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    Ok(None) => {
-                        let _ = child.kill();
-                        child.wait()?;
-                        break (-1, true);
-                    }
-                    Err(err) => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(AppError::Io(err));
-                    }
+        let deadline = std::time::Instant::now() + Duration::from_millis(limit_ms);
+        let status = loop {
+            match child.try_wait() {
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
                 }
-            };
-            let stdout = stdout_reader
-                .join()
-                .map_err(|_| AppError::Platform("Command stdout reader panicked".into()))??;
-            let stderr = stderr_reader
-                .join()
-                .map_err(|_| AppError::Platform("Command stderr reader panicked".into()))??;
+                result => break result,
+            }
+        };
 
-            Ok(ExecCommandOutput {
-                exit_code,
-                stdout: String::from_utf8_lossy(&stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&stderr).into_owned(),
-                timed_out,
-            })
+        // A descendant may still hold the output pipes after the direct child exits.
+        #[cfg(windows)]
+        drop(job);
+        #[cfg(unix)]
+        if let Ok(group) = i32::try_from(child.id()) {
+            // The child was started as the leader of its own process group.
+            unsafe { libc::kill(-group, libc::SIGKILL) };
+        }
+
+        if !matches!(status, Ok(Some(_))) {
+            let _ = child.kill();
+            child.wait()?;
+        }
+        let status = status?;
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let collect_until = std::time::Instant::now() + Duration::from_millis(200);
+        while let Ok((is_stdout, chunk)) =
+            rx.recv_timeout(collect_until.saturating_duration_since(std::time::Instant::now()))
+        {
+            let output = if is_stdout { &mut stdout } else { &mut stderr };
+            output.extend(chunk?);
+            if std::time::Instant::now() >= collect_until {
+                break;
+            }
+        }
+
+        Ok(ExecCommandOutput {
+            exit_code: status.and_then(|status| status.code()).unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            timed_out: status.is_none(),
         })
     })
     .await
     .map_err(|err| AppError::Platform(format!("Command task failed: {err}")))??;
 
     Ok(result)
+}
+
+fn spawn_output_reader(
+    mut pipe: impl Read + Send + 'static,
+    is_stdout: bool,
+    sender: std::sync::mpsc::Sender<(bool, std::io::Result<Vec<u8>>)>,
+) {
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match pipe.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if sender.send((is_stdout, Ok(buffer[..n].to_vec()))).is_err() {
+                        break;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    let _ = sender.send((is_stdout, Err(error)));
+                    break;
+                }
+            }
+        }
+    });
 }
 
 #[cfg(windows)]
@@ -635,10 +677,8 @@ mod windows_job {
             }
         }
 
-        pub fn assign_child(&self, child: &Child) {
-            unsafe {
-                let _ = AssignProcessToJobObject(self.handle, child.as_raw_handle());
-            }
+        pub fn assign_child(&self, child: &Child) -> bool {
+            unsafe { AssignProcessToJobObject(self.handle, child.as_raw_handle()) != 0 }
         }
     }
 
@@ -674,6 +714,24 @@ mod tests {
         assert_eq!(output.exit_code, 0);
         assert_eq!(output.stdout.len(), 1_048_576);
         assert_eq!(output.stderr.len(), 1_048_576);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exec_timeout_closes_pipes_inherited_by_descendants() {
+        let root = std::env::temp_dir();
+        let start = std::time::Instant::now();
+        let output = tauri::async_runtime::block_on(exec_plugin_command(
+            &root,
+            "sh".into(),
+            vec!["-c".into(), "sleep 30 & printf ready; wait".into()],
+            Some(200),
+        ))
+        .unwrap();
+
+        assert!(output.timed_out);
+        assert_eq!(output.stdout, "ready");
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
