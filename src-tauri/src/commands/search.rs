@@ -36,13 +36,12 @@ pub fn search_items(
 ) -> AppResult<SearchResponse> {
     require_host_webview(&webview)?;
     let settings = state.current_settings();
-    let max_results = limit.unwrap_or(settings.max_results);
-    let mut engine = state
+    let engine = state
         .search
         .lock()
         .map_err(|_| AppError::Platform("Search engine mutex poisoned".to_string()))?;
 
-    let items = engine.search(&query, max_results, &settings.pinned_items);
+    let items = engine.search(&query, limit, &settings.pinned_items);
     let total_indexed = engine.len();
 
     Ok(SearchResponse {

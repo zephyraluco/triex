@@ -47,11 +47,16 @@ pub struct RawSearchItem {
     pub keywords: Vec<String>,
 }
 
-/// Indexed entry held in memory for sub-millisecond fuzzy search.
+/// Indexed entry held in memory for sub-millisecond continuous substring search.
 #[derive(Debug, Clone)]
 pub struct IndexedItem {
     pub raw: RawSearchItem,
     pub name_lower: String,
+    pub name_char_len: usize,
+    /// Lowercased `name` with whitespace stripped, paired with original character index map.
+    pub name_compact: String,
+    pub name_compact_char_map: Vec<usize>,
+    pub keywords_lower: Vec<String>,
     pub pinyin: PinyinProjection,
     pub frecency: f64,
 }
@@ -59,10 +64,26 @@ pub struct IndexedItem {
 impl IndexedItem {
     pub fn from_raw(raw: RawSearchItem, frecency: f64) -> Self {
         let name_lower = raw.name.to_lowercase();
+        let name_char_len = raw.name.chars().count();
+        let mut name_compact = String::with_capacity(name_lower.len());
+        let mut name_compact_char_map = Vec::with_capacity(name_char_len);
+        for (orig_idx, ch) in raw.name.chars().enumerate() {
+            if !ch.is_whitespace() {
+                for lower_ch in ch.to_lowercase() {
+                    name_compact.push(lower_ch);
+                    name_compact_char_map.push(orig_idx);
+                }
+            }
+        }
+        let keywords_lower = raw.keywords.iter().map(|k| k.to_lowercase()).collect();
         let pinyin = PinyinProjection::build(&raw.name);
         Self {
             raw,
             name_lower,
+            name_char_len,
+            name_compact,
+            name_compact_char_map,
+            keywords_lower,
             pinyin,
             frecency,
         }

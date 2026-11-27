@@ -70,19 +70,6 @@ pub fn scan_uwp_apps() -> Vec<RawSearchItem> {
 
                 let icon_source = format!("shell:AppsFolder\\{aumid}");
                 let icon_key = hash_icon_key(&icon_source);
-                let pkg_keyword = aumid
-                    .split('_')
-                    .next()
-                    .unwrap_or("")
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-
-                let mut keywords = Vec::new();
-                if !pkg_keyword.is_empty() && !pkg_keyword.eq_ignore_ascii_case(trimmed_name) {
-                    keywords.push(pkg_keyword);
-                }
 
                 results.push(RawSearchItem {
                     id: format!("uwp:{aumid}"),
@@ -93,7 +80,7 @@ pub fn scan_uwp_apps() -> Vec<RawSearchItem> {
                     exec_args: String::new(),
                     working_dir: String::new(),
                     icon_key,
-                    keywords,
+                    keywords: Vec::new(),
                 });
             }
 

@@ -11,24 +11,16 @@ export function GeneralSettings() {
   const patchSettings = useSettingsStore((s) => s.patchSettings);
   const isSaving = useSettingsStore((s) => s.isSaving);
   const [hotkeyDraft, setHotkeyDraft] = useState("");
-  const [maxResultsDraft, setMaxResultsDraft] = useState("30");
   useEffect(() => {
     if (settings) {
       setHotkeyDraft(settings.hotkey);
-      setMaxResultsDraft(String(settings.maxResults));
     }
   }, [settings]);
 
   const handleSaveGeneral = async () => {
     if (!settings) return;
-    const parsedMax = Number(maxResultsDraft);
-    const maxResults =
-      Number.isFinite(parsedMax) && parsedMax >= 5 && parsedMax <= 100
-        ? Math.round(parsedMax)
-        : settings.maxResults;
     const saved = await patchSettings({
       hotkey: hotkeyDraft.trim() || settings.hotkey,
-      maxResults,
     });
     if (saved) notifyStatus("设置已保存");
   };
@@ -36,7 +28,7 @@ export function GeneralSettings() {
   if (!settings) return null;
   return (<ContentSection
               title="常规"
-              description="管理全局呼出快捷键、启动行为与搜索展示数量。"
+              description="管理全局呼出快捷键与启动行为。"
             >
               <div className="max-w-lg space-y-5">
                 <div className="space-y-2">
@@ -52,24 +44,6 @@ export function GeneralSettings() {
                   />
                   <p className="text-xs text-muted-foreground">
                     用于随时在任意应用上方唤起或隐藏 Triex（例如 Alt+Space、Ctrl+Space）。
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="max-results" className="text-[13px]">
-                    最大搜索返回条数
-                  </Label>
-                  <Input
-                    id="max-results"
-                    type="number"
-                    min={5}
-                    max={100}
-                    value={maxResultsDraft}
-                    onChange={(e) => setMaxResultsDraft(e.target.value)}
-                    className="w-32 rounded-lg border-border/80 bg-surface"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    每次模糊匹配最多展示的结果数量（范围 5 ~ 100）。
                   </p>
                 </div>
 
@@ -116,9 +90,7 @@ export function GeneralSettings() {
                   size="sm"
                   className="h-9 rounded-lg px-4"
                   disabled={
-                    isSaving ||
-                    (hotkeyDraft.trim() === settings.hotkey &&
-                      maxResultsDraft === String(settings.maxResults))
+                    isSaving || hotkeyDraft.trim() === settings.hotkey
                   }
                   onClick={() => void handleSaveGeneral()}
                 >

@@ -7,16 +7,15 @@ use std::collections::HashMap;
 
 use crate::search::frecency::compute_frecency;
 use crate::search::index::{IndexedItem, RawSearchItem, SearchResultItem};
-use crate::search::matcher::{build_pattern, create_matcher, score_item};
+use crate::search::matcher::score_item;
 use crate::storage::apps_repo::UsageRecord;
 use crate::storage::now_unix_secs;
 
-/// In-memory fuzzy search engine combining nucleo-matcher, Chinese pinyin projections,
-/// and frecency ranking.
+/// In-memory continuous substring search engine combining direct text,
+/// Chinese pinyin projections, and frecency ranking.
 pub struct SearchEngine {
     items: Vec<IndexedItem>,
     item_positions: HashMap<String, usize>,
-    matcher: nucleo_matcher::Matcher,
 }
 
 impl Default for SearchEngine {
@@ -30,7 +29,6 @@ impl SearchEngine {
         Self {
             items: Vec::new(),
             item_positions: HashMap::new(),
-            matcher: create_matcher(),
         }
     }
 
@@ -94,8 +92,10 @@ impl SearchEngine {
     pub fn refresh_usage(&mut self, usage: &HashMap<String, UsageRecord>) {
         let now = now_unix_secs();
         for item in &mut self.items {
-            item.frecency = usage.get(&item.raw.id)
-                .map(|record| compute_frecency(*record, now)).unwrap_or(0.0);
+            item.frecency = usage
+                .get(&item.raw.id)
+                .map(|record| compute_frecency(*record, now))
+                .unwrap_or(0.0);
         }
     }
 
@@ -106,16 +106,16 @@ impl SearchEngine {
             .map(|item| &item.raw)
     }
 
-    /// Searches indexed items and returns at most `limit` top-ranked hits.
+    /// Searches indexed items using continuous substring matching and returns all matching hits
+    /// (or at most `limit` if explicitly requested).
     /// When `query` is blank, returns pinned items first, then frequently/recently used items.
     pub fn search(
-        &mut self,
+        &self,
         query: &str,
-        limit: usize,
+        limit: Option<usize>,
         pinned_ids: &[String],
     ) -> Vec<SearchResultItem> {
         let trimmed = query.trim();
-        let cap = limit.clamp(1, 500);
 
         if trimmed.is_empty() {
             let mut defaults: Vec<&IndexedItem> = self.items.iter().collect();
@@ -127,9 +127,8 @@ impl SearchEngine {
                     .then_with(|| b.frecency.total_cmp(&a.frecency))
                     .then_with(|| a.name_lower.cmp(&b.name_lower))
             });
-            return defaults
+            let mut results: Vec<SearchResultItem> = defaults
                 .into_iter()
-                .take(cap)
                 .map(|item| SearchResultItem {
                     id: item.raw.id.clone(),
                     kind: item.raw.kind,
@@ -141,35 +140,30 @@ impl SearchEngine {
                     match_indices: Vec::new(),
                 })
                 .collect();
+            if let Some(cap) = limit {
+                results.truncate(cap);
+            }
+            return results;
         }
 
         let query_lower = trimmed.to_lowercase();
-        let pattern = build_pattern(trimmed);
-        let mut utf32_buf = Vec::with_capacity(64);
-        let mut indices_buf = Vec::with_capacity(32);
+        let query_compact: String = query_lower.chars().filter(|c| !c.is_whitespace()).collect();
 
         let mut results: Vec<SearchResultItem> = self
             .items
             .iter()
-            .filter_map(|item| {
-                score_item(
-                    &mut self.matcher,
-                    &pattern,
-                    &query_lower,
-                    item,
-                    &mut utf32_buf,
-                    &mut indices_buf,
-                )
-            })
+            .filter_map(|item| score_item(&query_lower, &query_compact, item))
             .collect();
 
         results.sort_by(|a, b| {
             b.score
                 .total_cmp(&a.score)
-                .then_with(|| a.name.len().cmp(&b.name.len()))
-                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.name.chars().count().cmp(&b.name.chars().count()))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
-        results.truncate(cap);
+        if let Some(cap) = limit {
+            results.truncate(cap);
+        }
         results
     }
 }
@@ -223,7 +217,7 @@ mod tests {
         let mut engine = SearchEngine::new();
         engine.rebuild(sample_items(), &HashMap::new(), &[]);
 
-        let hits = engine.search("wx", 10, &[]);
+        let hits = engine.search("wx", None, &[]);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "app:wechat");
         assert_eq!(hits[0].match_indices, vec![0, 1]);
@@ -234,10 +228,21 @@ mod tests {
         let mut engine = SearchEngine::new();
         engine.rebuild(sample_items(), &HashMap::new(), &[]);
 
-        let hits = engine.search("jisuanqi", 10, &[]);
+        let hits = engine.search("jisuanqi", None, &[]);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "app:calc");
         assert_eq!(hits[0].match_indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn search_should_reject_non_contiguous_subsequence_and_mid_syllable_pinyin() {
+        let mut engine = SearchEngine::new();
+        engine.rebuild(sample_items(), &HashMap::new(), &[]);
+
+        // Non-contiguous subsequence "vde" should NOT match "Visual Studio Code".
+        assert!(engine.search("vde", None, &[]).is_empty());
+        // Mid-syllable "eix" should NOT match "weixin" ("微信").
+        assert!(engine.search("eix", None, &[]).is_empty());
     }
 
     #[test]
@@ -245,7 +250,7 @@ mod tests {
         let mut engine = SearchEngine::new();
         engine.rebuild(sample_items(), &HashMap::new(), &[]);
 
-        let hits = engine.search("vsc", 10, &[]);
+        let hits = engine.search("vsc", None, &[]);
         assert!(!hits.is_empty());
         assert_eq!(hits[0].id, "app:vscode");
     }
@@ -263,7 +268,7 @@ mod tests {
         );
         engine.rebuild(sample_items(), &usage, &[]);
 
-        let hits = engine.search("", 10, &[]);
+        let hits = engine.search("", None, &[]);
         assert_eq!(hits[0].id, "app:calc");
     }
 }

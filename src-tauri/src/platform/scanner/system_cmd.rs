@@ -80,13 +80,6 @@ pub fn builtin_system_commands() -> Vec<RawSearchItem> {
             "sys:recycle-bin",
             &["recycle", "trash", "huishouzhan"],
         ),
-        sys_cmd(
-            "triex-settings",
-            "Triex 偏好设置",
-            "打开启动器设置与插件管理",
-            "triex:settings",
-            &["triex", "preferences", "config", "shezhi"],
-        ),
     ]
 }
 
