@@ -71,6 +71,28 @@ fn apply_win11_rounded_corners(window: &Window) {
     }
 }
 
+/// Returns true if the primary mouse button (respecting Windows left/right button swap)
+/// is currently held down at the OS level.
+#[cfg(windows)]
+pub fn is_left_mouse_button_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON};
+
+    unsafe {
+        let primary_vk = if GetSystemMetrics(SM_SWAPBUTTON) != 0 {
+            VK_RBUTTON
+        } else {
+            VK_LBUTTON
+        };
+        (GetAsyncKeyState(i32::from(primary_vk.0)) as u16 & 0x8000) != 0
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_left_mouse_button_down() -> bool {
+    false
+}
+
 /// Captures the currently focused foreground OS window handle before showing the launcher.
 #[cfg(windows)]
 pub fn capture_foreground_hwnd() -> isize {

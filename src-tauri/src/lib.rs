@@ -9,7 +9,8 @@ pub mod state;
 pub mod storage;
 pub mod tray;
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use tauri::window::WindowBuilder;
 use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl, WindowEvent};
@@ -23,7 +24,9 @@ use crate::commands::search::{refresh_directory_watcher, trigger_rebuild_index};
 use crate::commands::settings::register_launcher_hotkey;
 use crate::commands::updater::check_for_update_inner;
 use crate::config::AppPaths;
-use crate::platform::window::{apply_window_vibrancy, is_window_or_child_foreground};
+use crate::platform::window::{
+    apply_window_vibrancy, is_left_mouse_button_down, is_window_or_child_foreground,
+};
 use crate::plugins::is_supported_package_path;
 use crate::protocol::icon::handle_icon_protocol;
 use crate::protocol::plugin::handle_plugin_protocol;
@@ -141,6 +144,7 @@ pub fn run() {
             });
 
             let handle = app.handle().clone();
+            let blur_seq = Arc::new(AtomicU64::new(0));
             main_win.on_window_event(move |event| {
                 if let WindowEvent::ThemeChanged(theme) = event {
                     let settings = handle.state::<AppState>().current_settings();
@@ -156,24 +160,71 @@ pub fn run() {
                         apply_window_vibrancy(&window, settings.vibrancy, resolved);
                     }
                 }
+                if let WindowEvent::Focused(true) = event {
+                    // Cancel any in-flight blur-hide check when focus returns to Triex.
+                    blur_seq.fetch_add(1, Ordering::SeqCst);
+                }
                 if let WindowEvent::Focused(false) = event {
                     let h = handle.clone();
-                    // Debounce briefly so focus transitions between sibling child WebView2 HWNDs
-                    // settle before checking whether OS foreground truly left Triex.
+                    let seq_counter = Arc::clone(&blur_seq);
+                    let my_seq = seq_counter.fetch_add(1, Ordering::SeqCst) + 1;
+                    let vis_epoch = h
+                        .state::<AppState>()
+                        .visibility_epoch
+                        .load(Ordering::SeqCst);
+
+                    // Debounce briefly for sibling WebView2 focus transitions; if the primary
+                    // mouse button is held down (e.g. dragging an external file), keep the
+                    // launcher visible until release, then re-verify focus before hiding.
                     tauri::async_runtime::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(35)).await;
-                        let st = h.state::<AppState>();
-                        if !st.current_settings().hide_on_blur
-                            || st.is_blur_suppressed()
-                            || !st.is_shown.load(Ordering::SeqCst)
-                        {
+
+                        let should_continue = || {
+                            if seq_counter.load(Ordering::SeqCst) != my_seq {
+                                return false;
+                            }
+                            let st = h.state::<AppState>();
+                            if st.visibility_epoch.load(Ordering::SeqCst) != vis_epoch
+                                || !st.current_settings().hide_on_blur
+                                || st.is_blur_suppressed()
+                                || !st.is_shown.load(Ordering::SeqCst)
+                            {
+                                return false;
+                            }
+                            match h.get_window("main") {
+                                Some(win) => !is_window_or_child_foreground(&win),
+                                None => false,
+                            }
+                        };
+
+                        if !should_continue() {
                             return;
                         }
-                        if let Some(win) = h.get_window("main")
-                            && !is_window_or_child_foreground(&win)
-                        {
-                            hide_main_launcher(&h, false);
+
+                        if is_left_mouse_button_down() {
+                            const POLL_INTERVAL_MS: u64 = 20;
+                            const MAX_DRAG_WAIT_MS: u64 = 60_000;
+                            let mut waited_ms = 0u64;
+
+                            while is_left_mouse_button_down() && waited_ms < MAX_DRAG_WAIT_MS {
+                                tokio::time::sleep(std::time::Duration::from_millis(
+                                    POLL_INTERVAL_MS,
+                                ))
+                                .await;
+                                waited_ms += POLL_INTERVAL_MS;
+                                if !should_continue() {
+                                    return;
+                                }
+                            }
+
+                            // Brief grace window after release so OS drop / refocus events settle.
+                            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                            if !should_continue() {
+                                return;
+                            }
                         }
+
+                        hide_main_launcher(&h, false);
                     });
                 }
             });
