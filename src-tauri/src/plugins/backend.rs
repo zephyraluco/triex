@@ -648,6 +648,27 @@ mod windows_job {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn exec_drains_both_pipes_before_exit() {
+        let root = std::env::temp_dir();
+        let output = tauri::async_runtime::block_on(exec_plugin_command(
+            &root,
+            "sh".into(),
+            vec![
+                "-c".into(),
+                "head -c 1048576 /dev/zero; head -c 1048576 /dev/zero >&2".into(),
+            ],
+            Some(5_000),
+        ))
+        .unwrap();
+
+        assert!(!output.timed_out);
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.stdout.len(), 1_048_576);
+        assert_eq!(output.stderr.len(), 1_048_576);
+    }
+
     #[test]
     fn dispatch_should_resolve_pending_rpc_response_and_error() {
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));

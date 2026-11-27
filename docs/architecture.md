@@ -1,6 +1,6 @@
 # Triex 系统架构文档
 
-> 本文档描述 **Triex**（基于 Tauri v2 + Rust + React 的 Windows 应用启动器与动态插件平台）的整体架构、核心子系统设计、关键数据流、IPC 契约与安全边界。  
+> 本文档描述 **Triex**（基于 Tauri v2 + Rust + React 的 Windows 应用启动器与动态插件平台）的整体架构、核心子系统设计、关键数据流、IPC 契约与安全边界。
 > 关于各项技术选型背后的权衡理由，请参阅 [架构与实现取舍记录 (ADR)](./architecture-decisions.md)。
 
 ---

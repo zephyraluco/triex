@@ -351,6 +351,29 @@ mod tests {
     }
 
     #[test]
+    fn sync_preserves_data_until_plugin_directory_is_removed() {
+        let paths = make_temp_paths("invalid-manifest");
+        let db = Database::open(&paths.db_path).unwrap();
+        let plugin_dir = paths.plugin_dir("demo");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        let manifest = plugin_dir.join("plugin.json");
+        std::fs::write(&manifest, br#"{"id":"demo","name":"Demo","version":"1.0.0"}"#).unwrap();
+        assert_eq!(sync_installed_plugins(&paths, &db).unwrap(), 1);
+        db.plugin_kv_put("demo", "saved", &serde_json::json!(42)).unwrap();
+
+        std::fs::write(&manifest, "{").unwrap();
+        assert_eq!(sync_installed_plugins(&paths, &db).unwrap(), 0);
+        assert!(db.plugin_kv_get("demo", "saved").unwrap().is_some());
+
+        std::fs::remove_dir_all(plugin_dir).unwrap();
+        sync_installed_plugins(&paths, &db).unwrap();
+        assert!(db.plugin_kv_get("demo", "saved").unwrap().is_none());
+
+        drop(db);
+        std::fs::remove_dir_all(&paths.data_dir).unwrap();
+    }
+
+    #[test]
     fn should_install_txz_and_zip_packages_including_nested_root() {
         let paths = make_temp_paths("txz-nested");
         let db = Database::open(&paths.db_path).unwrap();
