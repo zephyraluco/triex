@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -473,34 +473,53 @@ pub async fn exec_plugin_command(
             AppError::Plugin(format!("Failed to execute '{resolved_program}': {err}"))
         })?;
 
-        let deadline = std::time::Instant::now() + Duration::from_millis(limit_ms);
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => {
-                    let output = child.wait_with_output()?;
-                    return Ok(ExecCommandOutput {
-                        exit_code: output.status.code().unwrap_or(-1),
-                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                        timed_out: false,
-                    });
-                }
-                Ok(None) => {
-                    if std::time::Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let output = child.wait_with_output()?;
-                        return Ok(ExecCommandOutput {
-                            exit_code: -1,
-                            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                            timed_out: true,
-                        });
+        let mut stdout = child.stdout.take().expect("stdout was piped");
+        let mut stderr = child.stderr.take().expect("stderr was piped");
+        std::thread::scope(|scope| {
+            let stdout_reader = scope.spawn(move || {
+                let mut output = Vec::new();
+                stdout.read_to_end(&mut output)?;
+                Ok::<_, std::io::Error>(output)
+            });
+            let stderr_reader = scope.spawn(move || {
+                let mut output = Vec::new();
+                stderr.read_to_end(&mut output)?;
+                Ok::<_, std::io::Error>(output)
+            });
+
+            let deadline = std::time::Instant::now() + Duration::from_millis(limit_ms);
+            let (exit_code, timed_out) = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break (status.code().unwrap_or(-1), false),
+                    Ok(None) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(Duration::from_millis(10));
                     }
-                    std::thread::sleep(Duration::from_millis(10));
+                    Ok(None) => {
+                        let _ = child.kill();
+                        child.wait()?;
+                        break (-1, true);
+                    }
+                    Err(err) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(AppError::Io(err));
+                    }
                 }
-                Err(err) => return Err(AppError::Io(err)),
-            }
-        }
+            };
+            let stdout = stdout_reader
+                .join()
+                .map_err(|_| AppError::Platform("Command stdout reader panicked".into()))??;
+            let stderr = stderr_reader
+                .join()
+                .map_err(|_| AppError::Platform("Command stderr reader panicked".into()))??;
+
+            Ok(ExecCommandOutput {
+                exit_code,
+                stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                timed_out,
+            })
+        })
     })
     .await
     .map_err(|err| AppError::Platform(format!("Command task failed: {err}")))??;
