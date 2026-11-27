@@ -110,6 +110,7 @@ impl PluginBackendManager {
             .unwrap_or(DEFAULT_RPC_TIMEOUT_MS)
             .clamp(500, MAX_RPC_TIMEOUT_MS);
 
+        let mut write_finished = false;
         let write_and_receive = async {
             tokio::task::spawn_blocking(move || -> AppResult<()> {
                 let mut guard = stdin
@@ -121,20 +122,28 @@ impl PluginBackendManager {
             })
             .await
             .map_err(|err| AppError::Platform(format!("Backend writer task failed: {err}")))??;
-            Ok::<_, AppError>(rx.await)
+            write_finished = true;
+            rx.await
+                .map_err(|_| AppError::Plugin(format!(
+                    "Plugin '{plugin_id}' backend exited before responding"
+                )))?
+                .map_err(AppError::Plugin)
         };
         let result = match tokio::time::timeout(Duration::from_millis(wait_ms), write_and_receive).await {
-            Ok(Ok(Ok(Ok(value)))) => Ok(value),
-            Ok(Ok(Ok(Err(error)))) => Err(AppError::Plugin(error)),
-            Ok(Ok(Err(_))) => Err(AppError::Plugin(format!(
-                "Plugin '{plugin_id}' backend exited before responding"
-            ))),
-            Ok(Err(error)) => {
-                self.stop_matching_backend(plugin_id, &pending);
-                Err(error)
+            Ok(result) => {
+                if !write_finished {
+                    self.stop_matching_backend(plugin_id, &pending);
+                }
+                result
             }
             Err(_) => {
-                self.stop_matching_backend(plugin_id, &pending);
+                if write_finished {
+                    if let Ok(mut requests) = pending.lock() {
+                        requests.remove(&req_id);
+                    }
+                } else {
+                    self.stop_matching_backend(plugin_id, &pending);
+                }
                 Err(AppError::Plugin(format!(
                     "Plugin '{plugin_id}' backend call '{method}' timed out after {wait_ms}ms"
                 )))
