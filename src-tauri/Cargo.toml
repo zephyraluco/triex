@@ -1,6 +1,6 @@
 [package]
 name = "triex"
-version = "0.1.0"
+version = "0.1.1"
 description = "Triex - High-performance Windows Application Launcher"
 authors = ["zeal"]
 edition = "2024"
