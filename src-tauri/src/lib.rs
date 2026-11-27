@@ -12,22 +12,52 @@ pub mod tray;
 use std::sync::atomic::Ordering;
 
 use tauri::window::WindowBuilder;
-use tauri::{LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl, WindowEvent};
+use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tracing_subscriber::EnvFilter;
 
 use crate::commands::launcher::{hide_main_launcher, show_main_launcher};
 use crate::commands::menu::handle_context_menu_event;
+use crate::commands::plugin::install_plugin_source;
 use crate::commands::search::{refresh_directory_watcher, trigger_rebuild_index};
 use crate::commands::settings::register_launcher_hotkey;
 use crate::commands::updater::check_for_update_inner;
 use crate::config::AppPaths;
 use crate::platform::window::{apply_window_vibrancy, is_window_or_child_foreground};
+use crate::plugins::is_supported_package_path;
 use crate::protocol::icon::handle_icon_protocol;
 use crate::protocol::plugin::handle_plugin_protocol;
 use crate::state::AppState;
 use crate::storage::Database;
 use crate::tray::setup_tray;
+
+fn maybe_install_package_from_args(app: &tauri::AppHandle, args: &[String]) {
+    let package_arg = args.iter().skip(1).find(|arg| {
+        let path = std::path::Path::new(arg.trim().trim_matches('"'));
+        path.is_file() && is_supported_package_path(path)
+    });
+    let Some(pkg_path) = package_arg.cloned() else {
+        return;
+    };
+
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match install_plugin_source(&handle, &pkg_path).await {
+            Ok(manifest) => {
+                let _ = show_main_launcher(&handle);
+                let _ = handle.emit(
+                    "triex://status-message",
+                    format!("已安装插件 {}", manifest.name),
+                );
+            }
+            Err(err) => {
+                tracing::error!("Failed to install plugin package '{pkg_path}': {err}");
+                let _ = show_main_launcher(&handle);
+                let _ = handle.emit("triex://status-message", format!("插件安装失败: {err}"));
+            }
+        }
+    });
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -38,8 +68,9 @@ pub fn run() {
         .try_init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             let _ = show_main_launcher(app);
+            maybe_install_package_from_args(app, &args);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -165,6 +196,10 @@ pub fn run() {
 
             refresh_directory_watcher(app.handle())?;
 
+            // Handle `.txz` / `.zip` plugin package passed via OS file association on cold launch.
+            let startup_args: Vec<String> = std::env::args().collect();
+            maybe_install_package_from_args(app.handle(), &startup_args);
+
             // Silently check for updates 15 seconds after startup without interrupting search.
             if settings.auto_check_update {
                 let update_handle = app.handle().clone();
@@ -197,6 +232,8 @@ pub fn run() {
             commands::clipboard::read_clipboard_text,
             commands::clipboard::paste_to_previous_window,
             commands::plugin::list_plugins,
+            commands::plugin::pick_and_install_plugin,
+            commands::plugin::install_plugin_path,
             commands::plugin::install_plugin_dir,
             commands::plugin::uninstall_plugin,
             commands::plugin::reload_plugins,

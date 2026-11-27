@@ -151,6 +151,14 @@ export const ipc = {
     return invoke("list_plugins");
   },
 
+  pickAndInstallPlugin(): Promise<PluginManifest | null> {
+    return invoke("pick_and_install_plugin");
+  },
+
+  installPluginPath(sourcePath: string): Promise<PluginManifest> {
+    return invoke("install_plugin_path", { sourcePath });
+  },
+
   installPluginDir(sourceDir: string): Promise<PluginManifest> {
     return invoke("install_plugin_dir", { sourceDir });
   },

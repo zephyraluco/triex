@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Webview};
@@ -8,7 +9,7 @@ use crate::error::{AppError, AppResult};
 use crate::platform::launch::reveal_in_explorer;
 use crate::platform::window::set_logical_height;
 use crate::plugins::backend::{exec_plugin_command, ExecCommandOutput};
-use crate::plugins::install_plugin_from_dir;
+use crate::plugins::{inspect_plugin_manifest, install_plugin_from_path};
 use crate::plugins::manager::{
     close_active_plugin, detach_active_plugin, evict_plugin_webview, open_plugin,
     ActivePluginSession,
@@ -32,29 +33,149 @@ pub fn list_plugins(
     state.db.list_plugins()
 }
 
+/// Installs or updates a plugin from a `.txz` / `.zip` archive or local directory,
+/// safely stopping any active webview or backend process for that plugin ID beforehand.
+pub async fn install_plugin_source(app: &AppHandle, source_path: &str) -> AppResult<PluginManifest> {
+    let trimmed = source_path.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidInput("Plugin path is required".into()));
+    }
+    let path = PathBuf::from(trimmed);
+    let preview = inspect_plugin_manifest(&path)?;
+
+    let state = app.state::<AppState>();
+    if state
+        .active_plugin()
+        .is_some_and(|session| session.plugin_id == preview.id)
+    {
+        close_active_plugin(app)?;
+    }
+    evict_plugin_webview(app, &preview.id);
+
+    let manifest = install_plugin_from_path(&path, &state.paths, &state.db)?;
+    let _ = trigger_rebuild_index(app).await?;
+    Ok(manifest)
+}
+
+#[tauri::command]
+pub async fn pick_and_install_plugin(
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Option<PluginManifest>> {
+    require_host_webview(&webview)?;
+
+    // Suppress hide-on-blur while the native OS file dialog is open.
+    state.context_menu_open.store(true, Ordering::SeqCst);
+    let owner_hwnd: isize = app
+        .get_window("main")
+        .and_then(|win| win.hwnd().ok())
+        .map(|h| h.0 as isize)
+        .unwrap_or(0);
+
+    let picked = tokio::task::spawn_blocking(move || open_plugin_file_dialog(owner_hwnd))
+        .await
+        .map_err(|err| AppError::Platform(format!("File dialog task failed: {err}")));
+
+    state.context_menu_open.store(false, Ordering::SeqCst);
+    let Some(selected_path) = picked?? else {
+        return Ok(None);
+    };
+
+    let manifest = install_plugin_source(&app, &selected_path).await?;
+    Ok(Some(manifest))
+}
+
+#[cfg(windows)]
+fn open_plugin_file_dialog(owner_hwnd: isize) -> AppResult<Option<String>> {
+    use windows::core::w;
+    use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoTaskMemFree, CoUninitialize,
+    };
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    use windows::Win32::UI::Shell::{
+        FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FileOpenDialog,
+        IFileOpenDialog, SIGDN_FILESYSPATH,
+    };
+
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let initialized = hr.is_ok();
+
+        let dialog_res = (|| -> windows::core::Result<Option<String>> {
+            let dialog: IFileOpenDialog =
+                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+            dialog.SetTitle(w!("选择 Triex 插件安装包"))?;
+            dialog.SetOptions(FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM)?;
+
+            let filters = [
+                COMDLG_FILTERSPEC {
+                    pszName: w!("Triex 插件安装包 (*.txz;*.zip)"),
+                    pszSpec: w!("*.txz;*.zip"),
+                },
+                COMDLG_FILTERSPEC {
+                    pszName: w!("所有文件 (*.*)"),
+                    pszSpec: w!("*.*"),
+                },
+            ];
+            dialog.SetFileTypes(&filters)?;
+            dialog.SetFileTypeIndex(1)?;
+
+            let owner = HWND(owner_hwnd as *mut std::ffi::c_void);
+            if let Err(err) = dialog.Show(owner) {
+                if err.code() == ERROR_CANCELLED.to_hresult() {
+                    return Ok(None);
+                }
+                return Err(err);
+            }
+
+            let item = dialog.GetResult()?;
+            let path_pwstr = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+            let path_str = path_pwstr.to_string().unwrap_or_default();
+            CoTaskMemFree(Some(path_pwstr.0.cast()));
+
+            if path_str.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(path_str))
+            }
+        })();
+
+        if initialized {
+            CoUninitialize();
+        }
+
+        dialog_res.map_err(|err| AppError::Platform(format!("Failed to open file dialog: {err}")))
+    }
+}
+
+#[cfg(not(windows))]
+fn open_plugin_file_dialog(_owner_hwnd: isize) -> AppResult<Option<String>> {
+    Err(AppError::Platform(
+        "Native file dialog is only implemented for Windows".into(),
+    ))
+}
+
+#[tauri::command]
+pub async fn install_plugin_path(
+    source_path: String,
+    webview: Webview,
+    app: AppHandle,
+) -> AppResult<PluginManifest> {
+    require_host_webview(&webview)?;
+    install_plugin_source(&app, &source_path).await
+}
+
 #[tauri::command]
 pub async fn install_plugin_dir(
     source_dir: String,
     webview: Webview,
     app: AppHandle,
-    state: State<'_, AppState>,
 ) -> AppResult<PluginManifest> {
     require_host_webview(&webview)?;
-    let trimmed = source_dir.trim().trim_matches('"');
-    if trimmed.is_empty() {
-        return Err(AppError::InvalidInput("Plugin directory path is required".into()));
-    }
-    let manifest = install_plugin_from_dir(&PathBuf::from(trimmed), &state.paths, &state.db)?;
-    // Evict any previously cached webview/backend for the same plugin ID so updates take effect.
-    if state
-        .active_plugin()
-        .is_some_and(|session| session.plugin_id == manifest.id)
-    {
-        close_active_plugin(&app)?;
-    }
-    evict_plugin_webview(&app, &manifest.id);
-    let _ = trigger_rebuild_index(&app).await?;
-    Ok(manifest)
+    install_plugin_source(&app, &source_dir).await
 }
 
 #[tauri::command]

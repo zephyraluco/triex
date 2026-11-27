@@ -21,6 +21,14 @@
     "targets": ["nsis"],
     "createUpdaterArtifacts": true,
     "resources": ["resources/plugin-bridge.js"],
+    "fileAssociations": [
+      {
+        "ext": ["txz"],
+        "name": "Triex Plugin Package",
+        "description": "Triex 插件安装包 (.txz)",
+        "mimeType": "application/vnd.triex.plugin+zip"
+      }
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

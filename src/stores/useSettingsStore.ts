@@ -28,7 +28,8 @@ interface SettingsState {
   loadAll: () => Promise<void>;
   patchSettings: (patch: Partial<Omit<AppSettings, "pinnedItems">>) => Promise<boolean>;
   togglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
-  installPluginDir: (sourceDir: string) => Promise<boolean>;
+  pickAndInstallPlugin: () => Promise<string | null>;
+  installPluginPath: (sourcePath: string) => Promise<boolean>;
   uninstallPlugin: (pluginId: string) => Promise<boolean>;
   reloadPlugins: () => Promise<void>;
 }
@@ -95,10 +96,27 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     }
   },
 
-  installPluginDir: async (sourceDir) => {
+  pickAndInstallPlugin: async () => {
     set({ isSaving: true, error: null });
     try {
-      await ipc.installPluginDir(sourceDir);
+      const manifest = await ipc.pickAndInstallPlugin();
+      if (!manifest) {
+        set({ isSaving: false });
+        return null;
+      }
+      const plugins = await ipc.listPlugins();
+      set({ plugins, isSaving: false });
+      return manifest.name;
+    } catch (err) {
+      set({ error: String(err), isSaving: false });
+      return null;
+    }
+  },
+
+  installPluginPath: async (sourcePath) => {
+    set({ isSaving: true, error: null });
+    try {
+      await ipc.installPluginPath(sourcePath);
       const plugins = await ipc.listPlugins();
       set({ plugins, isSaving: false });
       return true;
