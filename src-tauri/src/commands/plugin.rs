@@ -1,15 +1,27 @@
-use tauri::{AppHandle, Emitter, Manager, State, Webview};
+use std::path::PathBuf;
 
+use serde_json::Value;
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, Webview};
+
+use crate::commands::search::trigger_rebuild_index;
 use crate::error::{AppError, AppResult};
+use crate::platform::launch::reveal_in_explorer;
+use crate::platform::window::set_logical_height;
+use crate::plugins::backend::{exec_plugin_command, ExecCommandOutput};
+use crate::plugins::install_plugin_from_dir;
 use crate::plugins::manager::{
     close_active_plugin, detach_active_plugin, evict_plugin_webview, open_plugin,
     ActivePluginSession,
 };
+use crate::plugins::manifest::PluginManifest;
 use crate::plugins::permission::{
     plugin_id_from_label, require_host_webview, require_permission,
 };
 use crate::state::AppState;
 use crate::storage::plugin_repo::{InstalledPluginRecord, PluginKvEntry};
+
+const LAUNCHER_WIDTH: f64 = 800.0;
+const HEADER_HEIGHT: f64 = 64.0;
 
 #[tauri::command]
 pub fn list_plugins(
@@ -18,6 +30,75 @@ pub fn list_plugins(
 ) -> AppResult<Vec<InstalledPluginRecord>> {
     require_host_webview(&webview)?;
     state.db.list_plugins()
+}
+
+#[tauri::command]
+pub async fn install_plugin_dir(
+    source_dir: String,
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<PluginManifest> {
+    require_host_webview(&webview)?;
+    let trimmed = source_dir.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidInput("Plugin directory path is required".into()));
+    }
+    let manifest = install_plugin_from_dir(&PathBuf::from(trimmed), &state.paths, &state.db)?;
+    // Evict any previously cached webview/backend for the same plugin ID so updates take effect.
+    if state
+        .active_plugin()
+        .is_some_and(|session| session.plugin_id == manifest.id)
+    {
+        close_active_plugin(&app)?;
+    }
+    evict_plugin_webview(&app, &manifest.id);
+    let _ = trigger_rebuild_index(&app).await?;
+    Ok(manifest)
+}
+
+#[tauri::command]
+pub async fn uninstall_plugin(
+    plugin_id: String,
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    require_host_webview(&webview)?;
+    if state
+        .active_plugin()
+        .is_some_and(|session| session.plugin_id == plugin_id)
+    {
+        close_active_plugin(&app)?;
+    }
+    evict_plugin_webview(&app, &plugin_id);
+
+    let plugin_dir = state.paths.plugin_dir(&plugin_id);
+    if plugin_dir.exists() && crate::config::AppPaths::ensure_within_dir(&state.paths.plugins_dir, &plugin_dir) {
+        std::fs::remove_dir_all(&plugin_dir)?;
+    }
+    state.db.remove_plugin(&plugin_id)?;
+    let _ = trigger_rebuild_index(&app).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reload_plugins(
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<InstalledPluginRecord>> {
+    require_host_webview(&webview)?;
+    let _ = trigger_rebuild_index(&app).await?;
+    state.db.list_plugins()
+}
+
+#[tauri::command]
+pub fn open_plugins_dir(webview: Webview, state: State<'_, AppState>) -> AppResult<()> {
+    require_host_webview(&webview)?;
+    std::fs::create_dir_all(&state.paths.plugins_dir)?;
+    let dir_str = state.paths.plugins_dir.to_string_lossy().to_string();
+    reveal_in_explorer(&dir_str)
 }
 
 #[tauri::command]
@@ -41,7 +122,7 @@ pub fn set_plugin_enabled(
     }
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let _ = crate::commands::search::trigger_rebuild_index(&handle).await;
+        let _ = trigger_rebuild_index(&handle).await;
     });
     Ok(())
 }
@@ -78,21 +159,106 @@ pub fn set_plugin_sub_input(
 ) -> AppResult<()> {
     let plugin_id = plugin_id_from_label(webview.label())?;
     let plugins = state.db.list_plugins()?;
-    if !plugins.iter().any(|plugin| plugin.id == plugin_id && plugin.enabled) {
+    if !plugins
+        .iter()
+        .any(|plugin| plugin.id == plugin_id && plugin.enabled)
+    {
         return Err(AppError::PermissionDenied("Plugin is disabled".into()));
     }
-    let mut guard = state.content_mode.lock()
+    let mut guard = state
+        .content_mode
+        .lock()
         .map_err(|_| AppError::Platform("Plugin lock poisoned".into()))?;
     let crate::state::ContentMode::Plugin(session) = &mut *guard else {
         return Err(AppError::PermissionDenied("No active plugin session".into()));
     };
     if session.webview_label != webview.label() {
-        return Err(AppError::PermissionDenied("Caller does not own the active session".into()));
+        return Err(AppError::PermissionDenied(
+            "Caller does not own the active session".into(),
+        ));
     }
     session.sub_input_placeholder = placeholder.clone();
     drop(guard);
     let _ = app.emit("triex://sub-input-placeholder", placeholder);
     Ok(())
+}
+
+#[tauri::command]
+pub fn plugin_set_height(
+    height: f64,
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let _plugin_id = plugin_id_from_label(webview.label())?;
+    let is_owner = state
+        .active_plugin()
+        .is_some_and(|session| session.webview_label == webview.label());
+    if !is_owner {
+        return Err(AppError::PermissionDenied(
+            "Caller does not own the active embedded plugin session".into(),
+        ));
+    }
+
+    let clamped = height.clamp(240.0, 720.0);
+    let _ = webview.set_size(LogicalSize::new(LAUNCHER_WIDTH, clamped));
+    if let Some(main_window) = app.get_window("main") {
+        set_logical_height(&main_window, LAUNCHER_WIDTH, HEADER_HEIGHT + clamped);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn plugin_backend_call(
+    method: String,
+    params: Option<Value>,
+    timeout_ms: Option<u64>,
+    webview: Webview,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Value> {
+    let plugin_id = plugin_id_from_label(webview.label())?.to_string();
+    require_permission(&state.db, &plugin_id, "backend")?;
+
+    let plugin = state
+        .db
+        .list_plugins()?
+        .into_iter()
+        .find(|p| p.id == plugin_id && p.enabled)
+        .ok_or_else(|| AppError::NotFound(format!("Enabled plugin '{plugin_id}' not found")))?;
+
+    let backend_cfg = plugin.manifest.backend.ok_or_else(|| {
+        AppError::Plugin(format!(
+            "Plugin '{plugin_id}' does not declare a backend in plugin.json"
+        ))
+    })?;
+
+    state
+        .plugin_backends
+        .call(
+            &app,
+            &plugin_id,
+            &backend_cfg,
+            &state.paths,
+            &method,
+            params.unwrap_or(Value::Null),
+            timeout_ms,
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn plugin_exec_command(
+    command: String,
+    args: Option<Vec<String>>,
+    timeout_ms: Option<u64>,
+    webview: Webview,
+    state: State<'_, AppState>,
+) -> AppResult<ExecCommandOutput> {
+    let plugin_id = plugin_id_from_label(webview.label())?.to_string();
+    require_permission(&state.db, &plugin_id, "process")?;
+    let plugin_root = state.paths.plugin_dir(&plugin_id);
+    exec_plugin_command(&plugin_root, command, args.unwrap_or_default(), timeout_ms).await
 }
 
 #[tauri::command]

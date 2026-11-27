@@ -139,7 +139,10 @@ pub async fn trigger_rebuild_index(app: &AppHandle) -> AppResult<IndexStatus> {
 
 pub fn refresh_directory_watcher(app: &AppHandle) -> AppResult<()> {
     let state = app.state::<AppState>();
-    let dirs = start_menu_directories(&state.current_settings().custom_scan_dirs);
+    let mut dirs = start_menu_directories(&state.current_settings().custom_scan_dirs);
+    if state.paths.plugins_dir.is_dir() && !dirs.contains(&state.paths.plugins_dir) {
+        dirs.push(state.paths.plugins_dir.clone());
+    }
     let handle = app.clone();
     let watcher = spawn_directory_watcher(dirs, move || {
         let handle = handle.clone();

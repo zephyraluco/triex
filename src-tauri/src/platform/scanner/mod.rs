@@ -51,6 +51,13 @@ pub fn scan_all_items(
 
     // 4. Installed and enabled plugins
     for plugin in plugins.iter().filter(|p| p.enabled) {
+        let icon_key = plugin
+            .manifest
+            .logo
+            .as_deref()
+            .filter(|logo| !logo.trim().is_empty())
+            .map(|logo| format!("plugin:{}:{}", plugin.id, logo.trim_start_matches('/')))
+            .unwrap_or_default();
         for feature in &plugin.manifest.features {
             let id = format!("plugin:{}:{}", plugin.id, feature.code);
             if !seen_ids.insert(id.clone()) {
@@ -64,7 +71,7 @@ pub fn scan_all_items(
                 exec_path: format!("{}:{}", plugin.id, feature.code),
                 exec_args: String::new(),
                 working_dir: String::new(),
-                icon_key: String::new(),
+                icon_key: icon_key.clone(),
                 keywords: feature.cmds.clone(),
             });
         }

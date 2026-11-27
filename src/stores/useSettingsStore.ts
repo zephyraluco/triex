@@ -28,6 +28,9 @@ interface SettingsState {
   loadAll: () => Promise<void>;
   patchSettings: (patch: Partial<Omit<AppSettings, "pinnedItems">>) => Promise<boolean>;
   togglePlugin: (pluginId: string, enabled: boolean) => Promise<void>;
+  installPluginDir: (sourceDir: string) => Promise<boolean>;
+  uninstallPlugin: (pluginId: string) => Promise<boolean>;
+  reloadPlugins: () => Promise<void>;
 }
 
 let saveQueue: Promise<unknown> = Promise.resolve();
@@ -89,6 +92,44 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       }));
     } catch (err) {
       set({ error: String(err) });
+    }
+  },
+
+  installPluginDir: async (sourceDir) => {
+    set({ isSaving: true, error: null });
+    try {
+      await ipc.installPluginDir(sourceDir);
+      const plugins = await ipc.listPlugins();
+      set({ plugins, isSaving: false });
+      return true;
+    } catch (err) {
+      set({ error: String(err), isSaving: false });
+      return false;
+    }
+  },
+
+  uninstallPlugin: async (pluginId) => {
+    set({ isSaving: true, error: null });
+    try {
+      await ipc.uninstallPlugin(pluginId);
+      set((state) => ({
+        plugins: state.plugins.filter((p) => p.id !== pluginId),
+        isSaving: false,
+      }));
+      return true;
+    } catch (err) {
+      set({ error: String(err), isSaving: false });
+      return false;
+    }
+  },
+
+  reloadPlugins: async () => {
+    set({ isSaving: true, error: null });
+    try {
+      const plugins = await ipc.reloadPlugins();
+      set({ plugins, isSaving: false });
+    } catch (err) {
+      set({ error: String(err), isSaving: false });
     }
   },
 }));

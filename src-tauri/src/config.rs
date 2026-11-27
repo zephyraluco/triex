@@ -100,23 +100,27 @@ pub struct AppPaths {
     pub db_path: PathBuf,
     pub icons_dir: PathBuf,
     pub plugins_dir: PathBuf,
+    pub plugin_data_dir: PathBuf,
 }
 
 impl AppPaths {
     pub fn resolve(base_dir: PathBuf) -> AppResult<Self> {
         let icons_dir = base_dir.join("icons");
         let plugins_dir = base_dir.join("plugins");
+        let plugin_data_dir = base_dir.join("plugin-data");
         let db_path = base_dir.join("triex.db");
 
         std::fs::create_dir_all(&base_dir)?;
         std::fs::create_dir_all(&icons_dir)?;
         std::fs::create_dir_all(&plugins_dir)?;
+        std::fs::create_dir_all(&plugin_data_dir)?;
 
         Ok(Self {
             data_dir: base_dir,
             db_path,
             icons_dir,
             plugins_dir,
+            plugin_data_dir,
         })
     }
 
@@ -126,6 +130,10 @@ impl AppPaths {
 
     pub fn plugin_dir(&self, plugin_id: &str) -> PathBuf {
         self.plugins_dir.join(plugin_id)
+    }
+
+    pub fn plugin_data_root(&self, plugin_id: &str) -> PathBuf {
+        self.plugin_data_dir.join(plugin_id)
     }
 
     pub fn ensure_within_dir(base: &Path, candidate: &Path) -> bool {

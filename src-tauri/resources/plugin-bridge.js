@@ -13,6 +13,7 @@
   let enterHandler = null;
   let subInputHandler = null;
   let subInputKeyDownHandler = null;
+  const backendListeners = new Map();
 
   window.addEventListener("triex:plugin-enter", (event) => {
     if (typeof enterHandler === "function") {
@@ -32,6 +33,20 @@
     }
   });
 
+  window.addEventListener("triex:backend-event", (event) => {
+    const detail = event.detail;
+    if (!detail || typeof detail.event !== "string") return;
+    const handlers = backendListeners.get(detail.event);
+    if (!handlers) return;
+    for (const cb of handlers) {
+      try {
+        cb(detail.payload);
+      } catch (err) {
+        console.error("[triex] backend event handler failed:", err);
+      }
+    }
+  });
+
   window.triex = Object.freeze({
     onPluginEnter(cb) {
       enterHandler = cb;
@@ -43,9 +58,43 @@
     onSubInputKeyDown(cb) {
       subInputKeyDownHandler = cb;
     },
+    setHeight(height) {
+      return invoke("plugin_set_height", { height });
+    },
     hideMainWindow() {
       return invoke("hide_window");
     },
+    backend: Object.freeze({
+      call(method, params = null, options = {}) {
+        return invoke("plugin_backend_call", {
+          method,
+          params,
+          timeoutMs: options?.timeoutMs,
+        });
+      },
+      onEvent(eventName, cb) {
+        if (typeof cb !== "function") return () => {};
+        let set = backendListeners.get(eventName);
+        if (!set) {
+          set = new Set();
+          backendListeners.set(eventName, set);
+        }
+        set.add(cb);
+        return () => {
+          set.delete(cb);
+          if (set.size === 0) backendListeners.delete(eventName);
+        };
+      },
+    }),
+    process: Object.freeze({
+      exec(command, args = [], options = {}) {
+        return invoke("plugin_exec_command", {
+          command,
+          args,
+          timeoutMs: options?.timeoutMs,
+        });
+      },
+    }),
     db: Object.freeze({
       get(key) {
         return invoke("plugin_db_get", { key });

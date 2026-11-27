@@ -6,6 +6,7 @@ use notify::RecommendedWatcher;
 
 use crate::commands::updater::UpdateMetadata;
 use crate::config::{AppPaths, AppSettings};
+use crate::plugins::backend::PluginBackendManager;
 use crate::plugins::manager::ActivePluginSession;
 use crate::search::SearchEngine;
 use crate::storage::Database;
@@ -55,6 +56,7 @@ pub struct AppState {
     pub context_menu_open: AtomicBool,
     pub context_menu_actions: Mutex<HashMap<String, ContextMenuAction>>,
     pub cached_plugin_webviews: Mutex<HashMap<String, CachedPluginWebview>>,
+    pub plugin_backends: PluginBackendManager,
     pub dir_watcher: Mutex<Option<RecommendedWatcher>>,
     pub pending_update: tokio::sync::Mutex<Option<tauri_plugin_updater::Update>>,
     pub cached_update_meta: Mutex<Option<UpdateMetadata>>,
@@ -78,6 +80,7 @@ impl AppState {
             context_menu_open: AtomicBool::new(false),
             context_menu_actions: Mutex::new(HashMap::new()),
             cached_plugin_webviews: Mutex::new(HashMap::new()),
+            plugin_backends: PluginBackendManager::new(),
             dir_watcher: Mutex::new(None),
             pending_update: tokio::sync::Mutex::new(None),
             cached_update_meta: Mutex::new(None),

@@ -45,13 +45,22 @@ export interface PluginFeature {
   cmds: string[];
 }
 
+export interface PluginBackendConfig {
+  kind: "process";
+  entry: string;
+  args: string[];
+  idleTimeoutSecs: number;
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
   version: string;
   description: string;
+  logo?: string | null;
   entry: string;
   height: number;
+  backend?: PluginBackendConfig | null;
   features: PluginFeature[];
   permissions: string[];
 }
@@ -73,6 +82,7 @@ export interface ActivePluginSession {
   featureCode: string;
   webviewLabel: string;
   subInputPlaceholder: string;
+  logo?: string | null;
   loading?: boolean;
 }
 
@@ -139,6 +149,22 @@ export const ipc = {
 
   listPlugins(): Promise<InstalledPluginRecord[]> {
     return invoke("list_plugins");
+  },
+
+  installPluginDir(sourceDir: string): Promise<PluginManifest> {
+    return invoke("install_plugin_dir", { sourceDir });
+  },
+
+  uninstallPlugin(pluginId: string): Promise<void> {
+    return invoke("uninstall_plugin", { pluginId });
+  },
+
+  reloadPlugins(): Promise<InstalledPluginRecord[]> {
+    return invoke("reload_plugins");
+  },
+
+  openPluginsDir(): Promise<void> {
+    return invoke("open_plugins_dir");
   },
 
   setPluginEnabled(pluginId: string, enabled: boolean): Promise<void> {

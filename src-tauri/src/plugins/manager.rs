@@ -51,6 +51,8 @@ pub struct ActivePluginSession {
     pub webview_label: String,
     pub sub_input_placeholder: String,
     #[serde(default)]
+    pub logo: Option<String>,
+    #[serde(default)]
     pub loading: bool,
 }
 
@@ -112,12 +114,19 @@ pub fn open_plugin(
         let init_script = build_plugin_init_script(state.current_settings().theme, feature_code);
         let app_for_load = app.clone();
         let plugin_id_for_load = plugin.id.clone();
+        let feature_code_for_load = feature_code.to_string();
 
         let builder = WebviewBuilder::new(&new_label, WebviewUrl::External(parsed_url))
             .transparent(true)
             .initialization_script(&init_script)
-            .on_page_load(move |_wv, payload| {
+            .on_page_load(move |wv, payload| {
                 if matches!(payload.event(), PageLoadEvent::Finished) {
+                    if let Ok(code_json) = serde_json::to_string(&feature_code_for_load) {
+                        let script = format!(
+                            "window.dispatchEvent(new CustomEvent('triex:plugin-enter', {{ detail: {{ code: {code_json} }} }}));"
+                        );
+                        let _ = wv.eval(&script);
+                    }
                     let _ = app_for_load.emit("triex://view-loaded", &plugin_id_for_load);
                 }
             });
@@ -156,6 +165,7 @@ pub fn open_plugin(
         feature_code: feature_code.to_string(),
         webview_label: label,
         sub_input_placeholder: format!("在 {} 中输入...", plugin.name),
+        logo: plugin.manifest.logo.clone(),
         loading: is_loading,
     };
 
@@ -165,9 +175,11 @@ pub fn open_plugin(
     Ok(session)
 }
 
-/// Immediately destroys a cached plugin child webview (e.g. when detaching or disabling).
+/// Immediately destroys a cached plugin child webview and stops its managed backend process
+/// (e.g. when detaching, disabling, or uninstalling).
 pub fn evict_plugin_webview(app: &AppHandle, plugin_id: &str) {
     let state = app.state::<AppState>();
+    state.plugin_backends.stop_plugin(plugin_id);
     let removed = state
         .cached_plugin_webviews
         .lock()
@@ -181,9 +193,11 @@ pub fn evict_plugin_webview(app: &AppHandle, plugin_id: &str) {
     }
 }
 
-/// Closes all kept-alive plugin child webviews (used during graceful shutdown before update install).
+/// Closes all kept-alive plugin child webviews and stops all plugin backend processes
+/// (used during graceful shutdown before update install).
 pub fn close_all_cached_plugin_webviews(app: &AppHandle) {
     let state = app.state::<AppState>();
+    state.plugin_backends.stop_all();
     let _ = state.take_active_plugin();
     let labels: Vec<String> = state
         .cached_plugin_webviews
@@ -243,6 +257,17 @@ pub fn close_active_plugin(app: &AppHandle) -> AppResult<()> {
                 let _ = wv.close();
             }
         });
+
+        let idle_secs = state
+            .db
+            .list_plugins()
+            .ok()
+            .and_then(|list| list.into_iter().find(|p| p.id == session.plugin_id))
+            .and_then(|p| p.manifest.backend.map(|b| b.idle_timeout_secs))
+            .unwrap_or(PLUGIN_KEEP_ALIVE_SECS);
+        state
+            .plugin_backends
+            .schedule_idle_stop(app, &session.plugin_id, idle_secs);
 
         if !state.settings_open()
             && let Some(shell_wv) = app.get_webview("main")
