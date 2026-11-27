@@ -57,7 +57,9 @@ pub fn sync_installed_plugins(paths: &AppPaths, db: &Database) -> AppResult<usiz
     // Remove stale plugin rows whose directories no longer exist on disk.
     if let Ok(existing) = db.list_plugins() {
         for record in existing {
-            if !found_ids.contains(&record.id) {
+            if !found_ids.contains(&record.id)
+                && matches!(paths.plugin_dir(&record.id).try_exists(), Ok(false))
+            {
                 let _ = db.remove_plugin(&record.id);
             }
         }
