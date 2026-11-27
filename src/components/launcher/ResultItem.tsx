@@ -13,7 +13,6 @@ import {
   Terminal,
   Trash2,
 } from "lucide-react";
-import { CommandItem } from "@/components/ui/command";
 import { HighlightText } from "@/components/launcher/HighlightText";
 import { getIconUrl } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
@@ -89,7 +88,6 @@ function resolveSystemIcon(execPath: string) {
     case "sys:recycle-bin":
       return { bg: "bg-slate-600", Icon: Trash2 };
     case "sys:settings":
-    case "triex:settings":
       return { bg: "bg-blue-600", Icon: Settings };
     case "sys:control":
     case "sys:env":
@@ -110,16 +108,17 @@ export const ResultItem = memo(function ResultItem({
   const iconUrl = getIconUrl(item.iconKey);
 
   return (
-    <CommandItem
-      value={item.id}
-      onSelect={() => onSelect(item)}
+    <div
+      role="option"
+      aria-selected={isSelected}
+      data-item-id={item.id}
+      onClick={() => onSelect(item)}
       onContextMenu={(e) => onContextMenu(item, e)}
       title={item.name}
       className={cn(
-        "flex h-[88px] w-full flex-col items-center justify-center gap-2 rounded-xl px-1.5 py-2 text-center transition-colors cursor-pointer",
-        "data-[selected=true]:bg-surface-active data-[selected=true]:text-foreground data-[selected=true]:ring-1 data-[selected=true]:ring-inset data-[selected=true]:ring-border/70",
+        "flex h-[88px] w-full select-none flex-col items-center justify-center gap-2 rounded-xl px-1.5 py-2 text-center cursor-pointer",
         isSelected
-          ? "bg-surface-active text-foreground ring-1 ring-inset ring-border/70 hover:bg-surface-active"
+          ? "bg-surface-active text-foreground ring-1 ring-inset ring-border/70"
           : "hover:bg-surface-hover",
       )}
     >
@@ -130,7 +129,7 @@ export const ResultItem = memo(function ResultItem({
             alt=""
             width={38}
             height={38}
-            loading="lazy"
+            draggable={false}
             onError={() => setImgFailed(true)}
             className="h-[38px] w-[38px] object-contain drop-shadow-[0_1px_2px_rgba(0,0,0,0.12)]"
           />
@@ -147,6 +146,6 @@ export const ResultItem = memo(function ResultItem({
       >
         <HighlightText text={item.name} indices={item.matchIndices} />
       </span>
-    </CommandItem>
+    </div>
   );
 });

@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, Webview, WebviewBuilder,
-    WebviewUrl,
+    webview::PageLoadEvent, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State,
+    Webview, WebviewBuilder, WebviewUrl,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -242,7 +242,7 @@ pub fn open_settings_window(app: &AppHandle) -> AppResult<()> {
         .and_then(|g| g.clone())
         .and_then(|label| app.get_webview(&label));
 
-    if let Some(wv) = cached_wv {
+    let is_loading = if let Some(wv) = cached_wv {
         let _ = wv.set_position(LogicalPosition::new(0.0, HEADER_LOGICAL_HEIGHT));
         let _ = wv.set_size(LogicalSize::new(
             LAUNCHER_LOGICAL_WIDTH,
@@ -250,11 +250,18 @@ pub fn open_settings_window(app: &AppHandle) -> AppResult<()> {
         ));
         let _ = wv.show();
         let _ = wv.set_focus();
+        false
     } else {
         let seq = SETTINGS_VIEW_SEQ.fetch_add(1, Ordering::Relaxed);
         let label = format!("settings-view:{seq}");
+        let app_for_load = app.clone();
         let builder = WebviewBuilder::new(&label, WebviewUrl::App("settings.html".into()))
-            .transparent(true);
+            .transparent(true)
+            .on_page_load(move |_wv, payload| {
+                if matches!(payload.event(), PageLoadEvent::Finished) {
+                    let _ = app_for_load.emit("triex://view-loaded", "settings");
+                }
+            });
 
         main_window
             .add_child(
@@ -270,7 +277,8 @@ pub fn open_settings_window(app: &AppHandle) -> AppResult<()> {
         if let Ok(mut guard) = state.settings_webview_label.lock() {
             *guard = Some(label);
         }
-    }
+        true
+    };
 
     set_shell_webview_bounds(app, LAUNCHER_LOGICAL_WIDTH, HEADER_LOGICAL_HEIGHT);
     set_logical_height(
@@ -280,6 +288,6 @@ pub fn open_settings_window(app: &AppHandle) -> AppResult<()> {
     );
 
     state.set_settings_open(true);
-    let _ = app.emit("triex://settings-opened", ());
+    let _ = app.emit("triex://settings-opened", is_loading);
     Ok(())
 }

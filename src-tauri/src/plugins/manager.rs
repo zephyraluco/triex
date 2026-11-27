@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl,
-    WebviewWindowBuilder,
+    webview::PageLoadEvent, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager,
+    WebviewBuilder, WebviewUrl, WebviewWindowBuilder,
 };
 
 use crate::commands::settings::close_settings_view;
@@ -50,6 +50,8 @@ pub struct ActivePluginSession {
     pub feature_code: String,
     pub webview_label: String,
     pub sub_input_placeholder: String,
+    #[serde(default)]
+    pub loading: bool,
 }
 
 /// Mounts a plugin UI as a sandboxed child webview inside the main launcher window.
@@ -89,7 +91,7 @@ pub fn open_plugin(
             }
         });
 
-    let label = if let Some(existing_label) = reused_label {
+    let (label, is_loading) = if let Some(existing_label) = reused_label {
         if let Some(wv) = app.get_webview(&existing_label) {
             let _ = wv.set_position(LogicalPosition::new(0.0, HEADER_HEIGHT));
             let _ = wv.set_size(LogicalSize::new(LAUNCHER_WIDTH, plugin_height));
@@ -102,16 +104,23 @@ pub fn open_plugin(
                 let _ = wv.eval(&script);
             }
         }
-        existing_label
+        (existing_label, false)
     } else {
         let seq = PLUGIN_VIEW_SEQ.fetch_add(1, Ordering::Relaxed);
         let new_label = format!("plugin-{}:{seq}", plugin.id);
         let parsed_url = build_plugin_url(&plugin.id, &plugin.manifest.entry)?;
         let init_script = build_plugin_init_script(state.current_settings().theme, feature_code);
+        let app_for_load = app.clone();
+        let plugin_id_for_load = plugin.id.clone();
 
         let builder = WebviewBuilder::new(&new_label, WebviewUrl::External(parsed_url))
             .transparent(true)
-            .initialization_script(&init_script);
+            .initialization_script(&init_script)
+            .on_page_load(move |_wv, payload| {
+                if matches!(payload.event(), PageLoadEvent::Finished) {
+                    let _ = app_for_load.emit("triex://view-loaded", &plugin_id_for_load);
+                }
+            });
 
         let _child = main_window
             .add_child(
@@ -134,7 +143,7 @@ pub fn open_plugin(
                 },
             );
         }
-        new_label
+        (new_label, true)
     };
 
     // Shrink the primary shell webview to header-only so it never overlaps the plugin webview.
@@ -147,6 +156,7 @@ pub fn open_plugin(
         feature_code: feature_code.to_string(),
         webview_label: label,
         sub_input_placeholder: format!("在 {} 中输入...", plugin.name),
+        loading: is_loading,
     };
 
     *state.content_mode.lock().map_err(|_| AppError::Platform("Content mode lock poisoned".into()))? = crate::state::ContentMode::Plugin(session.clone());

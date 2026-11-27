@@ -14,6 +14,7 @@ export interface PastedAttachment {
 
 interface LauncherState {
   query: string;
+  resultQuery: string;
   subInput: string;
   results: SearchResultItem[];
   totalIndexed: number;
@@ -23,30 +24,66 @@ interface LauncherState {
   expandedSections: Record<string, boolean>;
   settingsOpen: boolean;
   activePlugin: ActivePluginSession | null;
+  viewLoading: boolean;
   attachment: PastedAttachment | null;
   statusMessage: string | null;
 
   setQuery: (query: string) => void;
   setSubInput: (value: string) => void;
-  setSearchResult: (items: SearchResultItem[], totalIndexed: number) => void;
+  setSearchResult: (
+    items: SearchResultItem[],
+    totalIndexed: number,
+    resultQuery: string,
+    options?: { preserveSelection?: boolean },
+  ) => void;
   setSelectedId: (id: string) => void;
   setPinnedItems: (ids: string[]) => void;
   toggleDashboard: () => void;
   setShowDashboard: (show: boolean) => void;
   toggleSectionExpanded: (sectionKey: string) => void;
-  setSettingsOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean, loading?: boolean) => void;
   openSettings: () => void;
   closeSettings: () => void;
   toggleSettings: () => void;
-  setActivePlugin: (session: ActivePluginSession | null) => void;
+  setActivePlugin: (session: ActivePluginSession | null, loading?: boolean) => void;
+  setViewLoading: (loading: boolean) => void;
   setSubInputPlaceholder: (placeholder: string) => void;
   setAttachment: (attachment: PastedAttachment | null) => void;
   setStatusMessage: (message: string | null) => void;
   resetSearch: () => void;
 }
 
+function resolveDefaultSelectedId(
+  items: SearchResultItem[],
+  resultQuery: string,
+  pinnedItems: string[],
+  showDashboard: boolean,
+): string {
+  if (resultQuery.trim().length > 0) {
+    return items[0]?.id ?? "";
+  }
+  const byId = new Map(items.map((item) => [item.id, item]));
+  for (const id of pinnedItems) {
+    if (byId.has(id)) return id;
+  }
+  const pinnedSet = new Set(pinnedItems);
+  const firstRecent = items.find((item) => !pinnedSet.has(item.id) && item.score > 0);
+  if (firstRecent) return firstRecent.id;
+
+  if (showDashboard) {
+    const firstApp = items.find((item) => item.kind === "app" || item.kind === "uwpApp");
+    if (firstApp) return firstApp.id;
+    const firstPlugin = items.find((item) => item.kind === "plugin");
+    if (firstPlugin) return firstPlugin.id;
+    const firstCmd = items.find((item) => item.kind === "systemCmd");
+    if (firstCmd) return firstCmd.id;
+  }
+  return "";
+}
+
 export const useLauncherStore = create<LauncherState>((set) => ({
   query: "",
+  resultQuery: "",
   subInput: "",
   results: [],
   totalIndexed: 0,
@@ -56,22 +93,29 @@ export const useLauncherStore = create<LauncherState>((set) => ({
   expandedSections: {},
   settingsOpen: false,
   activePlugin: null,
+  viewLoading: false,
   attachment: null,
   statusMessage: null,
 
-  setQuery: (query) =>
-    set({
-      query,
-      expandedSections: {},
-    }),
+  setQuery: (query) => set({ query }),
   setSubInput: (subInput) => set({ subInput }),
-  setSearchResult: (items, totalIndexed) =>
+  setSearchResult: (items, totalIndexed, resultQuery, options) =>
     set((state) => {
-      const stillExists = items.some((item) => item.id === state.selectedId);
+      const preserveSelection = options?.preserveSelection ?? false;
+      const stillExists =
+        preserveSelection && items.some((item) => item.id === state.selectedId);
+      const defaultSelectedId = resolveDefaultSelectedId(
+        items,
+        resultQuery,
+        state.pinnedItems,
+        state.showDashboard,
+      );
       return {
         results: items,
         totalIndexed,
-        selectedId: stillExists ? state.selectedId : (items[0]?.id ?? ""),
+        resultQuery,
+        expandedSections: preserveSelection ? state.expandedSections : {},
+        selectedId: stillExists ? state.selectedId : defaultSelectedId,
       };
     }),
   setSelectedId: (selectedId) => set({ selectedId }),
@@ -85,10 +129,11 @@ export const useLauncherStore = create<LauncherState>((set) => ({
         [sectionKey]: !state.expandedSections[sectionKey],
       },
     })),
-  setSettingsOpen: (settingsOpen) =>
+  setSettingsOpen: (settingsOpen, loading = false) =>
     set((state) => ({
       settingsOpen,
       activePlugin: settingsOpen ? null : state.activePlugin,
+      viewLoading: settingsOpen ? loading : false,
     })),
   openSettings: () => {
     void ipc.openSettings();
@@ -99,12 +144,14 @@ export const useLauncherStore = create<LauncherState>((set) => ({
   toggleSettings: () => {
     void ipc.toggleSettings();
   },
-  setActivePlugin: (activePlugin) =>
+  setActivePlugin: (activePlugin, loading = false) =>
     set({
       activePlugin,
       settingsOpen: false,
       subInput: "",
+      viewLoading: activePlugin ? loading : false,
     }),
+  setViewLoading: (viewLoading) => set({ viewLoading }),
   setSubInputPlaceholder: (placeholder) =>
     set((state) =>
       state.activePlugin

@@ -3,13 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 import { ipc, type IndexStatus } from "@/lib/ipc";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
-const SEARCH_DEBOUNCE_MS = 16;
-const DASHBOARD_FETCH_LIMIT = 300;
-const HOME_FETCH_LIMIT = 100;
-
 /**
- * Executes Rust nucleo-matcher + pinyin search with monotonic request IDs
- * to prevent out-of-order IPC responses from overwriting newer results.
+ * Executes Rust continuous substring + pinyin search immediately on query change
+ * with monotonic request IDs to prevent out-of-order IPC responses from overwriting newer results.
  */
 export function useSearch() {
   const query = useLauncherStore((s) => s.query);
@@ -18,21 +14,19 @@ export function useSearch() {
   const setSearchResult = useLauncherStore((s) => s.setSearchResult);
   const requestSeqRef = useRef(0);
   const latestParamsRef = useRef({ query, showDashboard });
+  const prevQueryRef = useRef(query);
+  const pendingResetSelectionRef = useRef(true);
   latestParamsRef.current = { query, showDashboard };
 
-  const runSearch = async (text: string, dashboardOpen: boolean) => {
+  const runSearch = async (text: string, preserveSelection: boolean) => {
     const requestId = ++requestSeqRef.current;
-    const isBlank = text.trim().length === 0;
-    const limit = isBlank
-      ? dashboardOpen
-        ? DASHBOARD_FETCH_LIMIT
-        : HOME_FETCH_LIMIT
-      : undefined;
 
     try {
-      const response = await ipc.searchItems(text, requestId, limit);
+      const response = await ipc.searchItems(text, requestId);
       if (response.requestId === requestSeqRef.current) {
-        setSearchResult(response.items, response.totalIndexed);
+        setSearchResult(response.items, response.totalIndexed, text, {
+          preserveSelection,
+        });
       }
     } catch (err) {
       console.error("Search failed:", err);
@@ -40,19 +34,22 @@ export function useSearch() {
   };
 
   useEffect(() => {
+    if (prevQueryRef.current !== query) {
+      prevQueryRef.current = query;
+      pendingResetSelectionRef.current = true;
+    }
     if (activePlugin) return;
-    const timer = window.setTimeout(() => {
-      void runSearch(query, showDashboard);
-    }, SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+    const preserveSelection = !pendingResetSelectionRef.current;
+    pendingResetSelectionRef.current = false;
+    void runSearch(query, preserveSelection);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, showDashboard, activePlugin]);
 
   useEffect(() => {
     const unlistenPromise = listen<IndexStatus>("triex://index-updated", () => {
       if (!useLauncherStore.getState().activePlugin) {
-        const { query: q, showDashboard: d } = latestParamsRef.current;
-        void runSearch(q, d);
+        const { query: q } = latestParamsRef.current;
+        void runSearch(q, true);
       }
     });
     return () => {

@@ -73,6 +73,7 @@ export interface ActivePluginSession {
   featureCode: string;
   webviewLabel: string;
   subInputPlaceholder: string;
+  loading?: boolean;
 }
 
 export interface UpdateMetadata {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, type MouseEvent } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CommandGroup, CommandList } from "@/components/ui/command";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResultItem } from "@/components/launcher/ResultItem";
 import { ipc, type SearchResultItem } from "@/lib/ipc";
 import { useLauncherStore } from "@/stores/useLauncherStore";
@@ -31,6 +31,7 @@ export function ResultList() {
   const gridNavActiveRef = useRef(false);
   const results = useLauncherStore((s) => s.results);
   const query = useLauncherStore((s) => s.query);
+  const resultQuery = useLauncherStore((s) => s.resultQuery);
   const selectedId = useLauncherStore((s) => s.selectedId);
   const pinnedItems = useLauncherStore((s) => s.pinnedItems);
   const showDashboard = useLauncherStore((s) => s.showDashboard);
@@ -79,7 +80,7 @@ export function ResultList() {
     [expandedSections],
   );
 
-  const hasQuery = query.trim().length > 0;
+  const hasQuery = resultQuery.trim().length > 0;
 
   const sections = useMemo<GridSection[]>(() => {
     if (hasQuery) {
@@ -178,7 +179,7 @@ export function ResultList() {
     if (!selectedId || !listRef.current) return;
     const listEl = listRef.current;
     const escaped = CSS.escape(selectedId);
-    const itemEl = listEl.querySelector(`[cmdk-item][data-value="${escaped}"]`);
+    const itemEl = listEl.querySelector(`[data-item-id="${escaped}"]`);
     if (!(itemEl instanceof HTMLElement)) return;
 
     const listRect = listEl.getBoundingClientRect();
@@ -292,48 +293,54 @@ export function ResultList() {
   }
 
   return (
-    <CommandList ref={listRef} className="launcher-scroll max-h-[468px] px-3 pb-3">
-      {sections.map((section) => (
-        <div key={section.key} className="py-1">
-          <div className="flex items-center justify-between px-1.5 pb-2 pt-1">
-            <span className="text-xs font-semibold tracking-wide text-muted-foreground">
-              {section.heading}
-            </span>
-            {section.canExpand && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => toggleSectionExpanded(section.key)}
-                className="h-6 gap-0.5 rounded-lg px-2 text-[11px] text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-              >
-                <span>
-                  {section.isExpanded
-                    ? "收起"
-                    : `展开全部 (${section.allItems.length})`}
-                </span>
-                {section.isExpanded ? (
-                  <ChevronUp className="size-3" />
-                ) : (
-                  <ChevronDown className="size-3" />
-                )}
-              </Button>
-            )}
-          </div>
+    <ScrollArea
+      className="overflow-hidden"
+      viewportRef={listRef}
+      viewportClassName="h-auto max-h-[468px] w-full px-3 pb-3"
+    >
+      <div>
+        {sections.map((section) => (
+          <div key={section.key} className="py-1">
+            <div className="flex items-center justify-between px-1.5 pb-2 pt-1">
+              <span className="text-xs font-semibold tracking-wide text-muted-foreground">
+                {section.heading}
+              </span>
+              {section.canExpand && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => toggleSectionExpanded(section.key)}
+                  className="h-6 gap-0.5 rounded-lg px-2 text-[11px] text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+                >
+                  <span>
+                    {section.isExpanded
+                      ? "收起"
+                      : `展开全部 (${section.allItems.length})`}
+                  </span>
+                  {section.isExpanded ? (
+                    <ChevronUp className="size-3" />
+                  ) : (
+                    <ChevronDown className="size-3" />
+                  )}
+                </Button>
+              )}
+            </div>
 
-          <CommandGroup className="p-0 [&_[cmdk-group-items]]:grid [&_[cmdk-group-items]]:grid-cols-9 [&_[cmdk-group-items]]:gap-1">
-            {section.visibleItems.map((item) => (
-              <ResultItem
-                key={item.id}
-                item={item}
-                isSelected={item.id === selectedId}
-                onSelect={handleSelect}
-                onContextMenu={handleContextMenu}
-              />
-            ))}
-          </CommandGroup>
-        </div>
-      ))}
-    </CommandList>
+            <div className="grid grid-cols-9 gap-1">
+              {section.visibleItems.map((item) => (
+                <ResultItem
+                  key={item.id}
+                  item={item}
+                  isSelected={item.id === selectedId}
+                  onSelect={handleSelect}
+                  onContextMenu={handleContextMenu}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </ScrollArea>
   );
 }

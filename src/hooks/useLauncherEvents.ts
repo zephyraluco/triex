@@ -3,8 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { ipc, type ActivePluginSession, type AppSettings } from "@/lib/ipc";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
-const HOME_RESET_FETCH_LIMIT = 100;
-
 /**
  * Handles ZTools-style keyboard interactions (Esc hierarchy, Ctrl+M dashboard toggle,
  * Ctrl+K action menu, Alt+Enter admin launch) and Tauri lifecycle events.
@@ -16,6 +14,7 @@ export function useLauncherEvents(inputRef: RefObject<HTMLInputElement | null>) 
   const setStatusMessage = useLauncherStore((s) => s.setStatusMessage);
   const setSearchResult = useLauncherStore((s) => s.setSearchResult);
   const setSettingsOpen = useLauncherStore((s) => s.setSettingsOpen);
+  const setViewLoading = useLauncherStore((s) => s.setViewLoading);
   const toggleDashboard = useLauncherStore((s) => s.toggleDashboard);
   const resetSearch = useLauncherStore((s) => s.resetSearch);
 
@@ -41,8 +40,8 @@ export function useLauncherEvents(inputRef: RefObject<HTMLInputElement | null>) 
           return;
         }
         try {
-          const response = await ipc.searchItems("", Date.now(), HOME_RESET_FETCH_LIMIT);
-          setSearchResult(response.items, response.totalIndexed);
+          const response = await ipc.searchItems("", Date.now());
+          setSearchResult(response.items, response.totalIndexed, "");
         } catch {
           // Ignore errors during background pre-reset.
         }
@@ -67,11 +66,11 @@ export function useLauncherEvents(inputRef: RefObject<HTMLInputElement | null>) 
           inputRef.current?.select();
         });
       }),
-      listen("triex://settings-opened", () => {
-        setSettingsOpen(true);
+      listen<boolean>("triex://settings-opened", (e) => {
+        setSettingsOpen(true, Boolean(e.payload));
       }),
       listen("triex://settings-closed", () => {
-        setSettingsOpen(false);
+        setSettingsOpen(false, false);
         requestAnimationFrame(() => inputRef.current?.focus());
       }),
       listen("triex://toggle-dashboard", () => {
@@ -81,12 +80,21 @@ export function useLauncherEvents(inputRef: RefObject<HTMLInputElement | null>) 
         setPinnedItems(e.payload.pinnedItems ?? []);
       }),
       listen<ActivePluginSession>("triex://plugin-opened", (e) => {
-        setActivePlugin(e.payload);
+        setActivePlugin(e.payload, Boolean(e.payload.loading));
         requestAnimationFrame(() => inputRef.current?.focus());
       }),
       listen("triex://plugin-closed", () => {
-        setActivePlugin(null);
+        setActivePlugin(null, false);
         requestAnimationFrame(() => inputRef.current?.focus());
+      }),
+      listen<string>("triex://view-loaded", (e) => {
+        const state = useLauncherStore.getState();
+        if (
+          (e.payload === "settings" && state.settingsOpen) ||
+          (state.activePlugin && state.activePlugin.pluginId === e.payload)
+        ) {
+          setViewLoading(false);
+        }
       }),
       listen<string>("triex://sub-input-placeholder", (e) => {
         setSubInputPlaceholder(e.payload);
@@ -115,6 +123,7 @@ export function useLauncherEvents(inputRef: RefObject<HTMLInputElement | null>) 
     setSettingsOpen,
     setStatusMessage,
     setSubInputPlaceholder,
+    setViewLoading,
     toggleDashboard,
   ]);
 }

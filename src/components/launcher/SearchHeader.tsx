@@ -5,9 +5,9 @@ import type {
   RefObject,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Command as CommandPrimitive } from "cmdk";
 import {
   ArrowLeft,
+  Blocks,
   ExternalLink,
   FileText,
   Image as ImageIcon,
@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ipc } from "@/lib/ipc";
+import { cn } from "@/lib/utils";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
 interface SearchHeaderProps {
@@ -81,24 +82,61 @@ function TriexLogoGlyph({ className = "size-4" }: { className?: string }) {
 
 function TriexBrandBadge() {
   const settingsOpen = useLauncherStore((s) => s.settingsOpen);
+  const activePlugin = useLauncherStore((s) => s.activePlugin);
+  const viewLoading = useLauncherStore((s) => s.viewLoading);
   const toggleSettings = useLauncherStore((s) => s.toggleSettings);
 
+  const isPluginView = !settingsOpen && Boolean(activePlugin);
+  const ringColor = isPluginView ? "text-violet-500" : "text-primary";
+
   return (
-    <Button
-      type="button"
-      size="icon"
-      variant="default"
-      onClick={toggleSettings}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        void ipc.showBrandContextMenu();
-      }}
-      aria-label={settingsOpen ? "返回搜索" : "打开设置"}
-      className="size-9 shrink-0 rounded-xl shadow-xs"
-    >
-      <TriexLogoGlyph className="size-5" />
-    </Button>
+    <div className="relative flex size-9 shrink-0 items-center justify-center">
+      {viewLoading && (
+        <svg
+          viewBox="0 0 44 44"
+          className={cn(
+            "pointer-events-none absolute -inset-[3px] size-[42px] animate-spin",
+            ringColor,
+          )}
+          aria-hidden="true"
+        >
+          <circle
+            cx="22"
+            cy="22"
+            r="20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeDasharray="36 90"
+            className="opacity-90"
+          />
+        </svg>
+      )}
+
+      <Button
+        type="button"
+        size="icon"
+        variant="default"
+        onClick={toggleSettings}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void ipc.showBrandContextMenu();
+        }}
+        aria-label={settingsOpen ? "返回搜索" : "打开设置"}
+        className={cn(
+          "size-9 shrink-0 rounded-full shadow-xs",
+          isPluginView && "bg-violet-600 text-white hover:bg-violet-600/90",
+        )}
+      >
+        {isPluginView ? (
+          <Blocks className="size-[18px]" />
+        ) : (
+          <TriexLogoGlyph className="size-5" />
+        )}
+      </Button>
+    </div>
   );
 }
 
@@ -183,8 +221,10 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
     return (
       <div
         onMouseDown={handleHeaderMouseDown}
-        className="flex h-16 shrink-0 items-center justify-between border-b border-border/70 px-4"
+        className="flex h-16 shrink-0 items-center gap-3 border-b border-border/70 px-4"
       >
+        <TriexBrandBadge />
+
         <div className="flex items-center gap-2.5">
           <Button
             type="button"
@@ -229,8 +269,6 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
           >
             <MoreVertical className="size-4" />
           </Button>
-
-          <TriexBrandBadge />
         </div>
       </div>
     );
@@ -241,6 +279,8 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
       onMouseDown={handleHeaderMouseDown}
       className="flex h-16 shrink-0 items-center gap-3 px-4"
     >
+      <TriexBrandBadge />
+
       {activePlugin ? (
         <>
           <Button
@@ -275,7 +315,16 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             <ExternalLink className="size-4" />
           </Button>
 
-          <TriexBrandBadge />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => void ipc.showBrandContextMenu()}
+            aria-label="更多操作"
+            className="size-8 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+          >
+            <MoreVertical className="size-4" />
+          </Button>
         </>
       ) : (
         <>
@@ -307,10 +356,10 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             </Badge>
           )}
 
-          <CommandPrimitive.Input
+          <input
             ref={inputRef}
             value={query}
-            onValueChange={setQuery}
+            onChange={(e) => setQuery(e.target.value)}
             onPaste={handlePaste}
             onKeyDown={handleInputKeyDown}
             onMouseDown={(e) => handleInputMouseDown(e, query)}
@@ -348,7 +397,16 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             </Button>
           )}
 
-          <TriexBrandBadge />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => void ipc.showBrandContextMenu()}
+            aria-label="更多操作"
+            className="size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+          >
+            <MoreVertical className="size-4" />
+          </Button>
         </>
       )}
     </div>
