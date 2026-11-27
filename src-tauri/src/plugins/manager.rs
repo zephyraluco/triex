@@ -307,12 +307,27 @@ pub fn detach_active_plugin(app: &AppHandle) -> AppResult<()> {
     let init_script =
         build_plugin_init_script(state.current_settings().theme, &existing.feature_code);
 
-    WebviewWindowBuilder::new(app, &detached_label, WebviewUrl::External(parsed_url))
+    let window = WebviewWindowBuilder::new(app, &detached_label, WebviewUrl::External(parsed_url))
         .title(&plugin.name)
         .inner_size(LAUNCHER_LOGICAL_WIDTH, plugin.manifest.height.clamp(360.0, 800.0))
         .initialization_script(&init_script)
         .center()
         .build()?;
+
+    let handle = app.clone();
+    let idle_secs = plugin
+        .manifest
+        .backend
+        .as_ref()
+        .map_or(PLUGIN_KEEP_ALIVE_SECS, |backend| backend.idle_timeout_secs);
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            handle
+                .state::<AppState>()
+                .plugin_backends
+                .schedule_idle_stop(&handle, &plugin.id, idle_secs);
+        }
+    });
 
     Ok(())
 }

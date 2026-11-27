@@ -360,6 +360,13 @@ impl Drop for PluginBackendManager {
     }
 }
 
+fn plugin_is_open(app: &AppHandle, plugin_id: &str) -> bool {
+    app.state::<AppState>()
+        .active_plugin()
+        .is_some_and(|session| session.plugin_id == plugin_id)
+        || app.get_webview_window(&format!("plugin-detached-{plugin_id}")).is_some()
+}
+
 fn shutdown_running_backend(mut backend: RunningBackend) {
     let _ = backend.child.kill();
     let _ = backend.child.wait();
