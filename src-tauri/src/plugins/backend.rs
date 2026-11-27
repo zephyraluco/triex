@@ -106,47 +106,41 @@ impl PluginBackendManager {
         let mut line = serde_json::to_string(&payload)?;
         line.push('\n');
 
-        let write_result = {
-            let mut guard = stdin
-                .lock()
-                .map_err(|_| AppError::Platform("Backend stdin lock poisoned".into()))?;
-            guard.write_all(line.as_bytes()).and_then(|_| guard.flush())
-        };
-
-        if let Err(err) = write_result {
-            if let Ok(mut map) = pending.lock() {
-                map.remove(&req_id);
-            }
-            self.stop_plugin(plugin_id);
-            return Err(AppError::Plugin(format!(
-                "Failed to write RPC request to plugin '{plugin_id}' backend: {err}"
-            )));
-        }
-
         let wait_ms = timeout_ms
             .unwrap_or(DEFAULT_RPC_TIMEOUT_MS)
             .clamp(500, MAX_RPC_TIMEOUT_MS);
 
-        let result = match tokio::time::timeout(Duration::from_millis(wait_ms), rx).await {
-            Ok(Ok(Ok(val))) => Ok(val),
-            Ok(Ok(Err(rpc_err))) => Err(AppError::Plugin(rpc_err)),
-            Ok(Err(_)) => Err(AppError::Plugin(format!(
+        let write_and_receive = async {
+            tokio::task::spawn_blocking(move || -> AppResult<()> {
+                let mut guard = stdin
+                    .lock()
+                    .map_err(|_| AppError::Platform("Backend stdin lock poisoned".into()))?;
+                guard.write_all(line.as_bytes())?;
+                guard.flush()?;
+                Ok(())
+            })
+            .await
+            .map_err(|err| AppError::Platform(format!("Backend writer task failed: {err}")))??;
+            Ok::<_, AppError>(rx.await)
+        };
+        let result = match tokio::time::timeout(Duration::from_millis(wait_ms), write_and_receive).await {
+            Ok(Ok(Ok(Ok(value)))) => Ok(value),
+            Ok(Ok(Ok(Err(error)))) => Err(AppError::Plugin(error)),
+            Ok(Ok(Err(_))) => Err(AppError::Plugin(format!(
                 "Plugin '{plugin_id}' backend exited before responding"
             ))),
+            Ok(Err(error)) => {
+                self.stop_matching_backend(plugin_id, &pending);
+                Err(error)
+            }
             Err(_) => {
-                if let Ok(mut map) = pending.lock() {
-                    map.remove(&req_id);
-                }
+                self.stop_matching_backend(plugin_id, &pending);
                 Err(AppError::Plugin(format!(
                     "Plugin '{plugin_id}' backend call '{method}' timed out after {wait_ms}ms"
                 )))
             }
         };
-        let is_active = app
-            .state::<AppState>()
-            .active_plugin()
-            .is_some_and(|session| session.plugin_id == plugin_id);
-        if !is_active {
+        if !plugin_is_open(app, plugin_id) {
             self.schedule_idle_stop(app, plugin_id, backend_cfg.idle_timeout_secs);
         }
         result
@@ -175,10 +169,7 @@ impl PluginBackendManager {
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(Duration::from_secs(timeout_secs.max(5))).await;
             let state = handle.state::<AppState>();
-            let is_active = state
-                .active_plugin()
-                .is_some_and(|session| session.plugin_id == pid);
-            if is_active {
+            if plugin_is_open(&handle, &pid) {
                 return;
             }
             let stopped = state.plugin_backends.backends.lock().ok().and_then(|mut map| {
@@ -192,6 +183,19 @@ impl PluginBackendManager {
                 shutdown_running_backend(backend);
             }
         });
+    }
+
+    fn stop_matching_backend(&self, plugin_id: &str, pending: &PendingMap) {
+        let removed = self.backends.lock().ok().and_then(|mut map| {
+            if map.get(plugin_id).is_some_and(|backend| Arc::ptr_eq(&backend.pending, pending)) {
+                map.remove(plugin_id)
+            } else {
+                None
+            }
+        });
+        if let Some(backend) = removed {
+            shutdown_running_backend(backend);
+        }
     }
 
     /// Gracefully stops and cleans up the backend process for a single plugin.
@@ -357,17 +361,13 @@ impl Drop for PluginBackendManager {
 }
 
 fn shutdown_running_backend(mut backend: RunningBackend) {
-    if let Ok(mut stdin) = backend.stdin.lock() {
-        let _ = stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"shutdown\"}\n");
-        let _ = stdin.flush();
-    }
+    let _ = backend.child.kill();
+    let _ = backend.child.wait();
     if let Ok(mut pending) = backend.pending.lock() {
         for (_, tx) in pending.drain() {
             let _ = tx.send(Err("Plugin backend stopped".to_string()));
         }
     }
-    let _ = backend.child.kill();
-    let _ = backend.child.wait();
 }
 
 fn dispatch_rpc_line<F>(line: &str, pending: &PendingMap, mut on_notification: F)
