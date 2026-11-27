@@ -127,7 +127,7 @@ impl PluginBackendManager {
             .unwrap_or(DEFAULT_RPC_TIMEOUT_MS)
             .clamp(500, MAX_RPC_TIMEOUT_MS);
 
-        match tokio::time::timeout(Duration::from_millis(wait_ms), rx).await {
+        let result = match tokio::time::timeout(Duration::from_millis(wait_ms), rx).await {
             Ok(Ok(Ok(val))) => Ok(val),
             Ok(Ok(Err(rpc_err))) => Err(AppError::Plugin(rpc_err)),
             Ok(Err(_)) => Err(AppError::Plugin(format!(
@@ -141,7 +141,15 @@ impl PluginBackendManager {
                     "Plugin '{plugin_id}' backend call '{method}' timed out after {wait_ms}ms"
                 )))
             }
+        };
+        let is_active = app
+            .state::<AppState>()
+            .active_plugin()
+            .is_some_and(|session| session.plugin_id == plugin_id);
+        if !is_active {
+            self.schedule_idle_stop(app, plugin_id, backend_cfg.idle_timeout_secs);
         }
+        result
     }
 
     /// Schedules idle shutdown for a plugin's backend after its UI is closed.
@@ -173,15 +181,15 @@ impl PluginBackendManager {
             if is_active {
                 return;
             }
-            let should_stop = state
-                .plugin_backends
-                .backends
-                .lock()
-                .ok()
-                .and_then(|map| map.get(&pid).map(|b| b.idle_epoch == epoch))
-                .unwrap_or(false);
-            if should_stop {
-                state.plugin_backends.stop_plugin(&pid);
+            let stopped = state.plugin_backends.backends.lock().ok().and_then(|mut map| {
+                let idle = map.get(&pid).is_some_and(|backend| {
+                    backend.idle_epoch == epoch
+                        && backend.pending.lock().is_ok_and(|pending| pending.is_empty())
+                });
+                if idle { map.remove(&pid) } else { None }
+            });
+            if let Some(backend) = stopped {
+                shutdown_running_backend(backend);
             }
         });
     }
