@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResultItem } from "@/components/launcher/ResultItem";
 import { ipc, type SearchResultItem } from "@/lib/ipc";
+import { groupLauncherSections } from "@/lib/launcherSections";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
 /** Number of icon cards per row in the ZTools-style launcher grid. */
@@ -80,56 +81,13 @@ export function ResultList() {
     [expandedSections],
   );
 
-  const hasQuery = resultQuery.trim().length > 0;
-
-  const sections = useMemo<GridSection[]>(() => {
-    if (hasQuery) {
-      return results.length > 0 ? [buildSection("best", "最佳匹配", results)] : [];
-    }
-
-    const pinnedSet = new Set(pinnedItems);
-    const byId = new Map(results.map((r) => [r.id, r]));
-    const pinned = pinnedItems
-      .map((id) => byId.get(id))
-      .filter((item): item is SearchResultItem => item !== undefined);
-
-    // "最近使用" strictly contains items that have actual launch history (frecency > 0).
-    const recent = results.filter((r) => !pinnedSet.has(r.id) && r.score > 0);
-
-    const groups: GridSection[] = [];
-    if (pinned.length > 0) {
-      groups.push(buildSection("pinned", "已固定", pinned));
-    }
-    if (recent.length > 0) {
-      groups.push(buildSection("recent", "最近使用", recent));
-    }
-
-    // Pressing Ctrl+M opens full dashboard sections; each section expands/collapses independently.
-    if (showDashboard) {
-      const shownIds = new Set(groups.flatMap((g) => g.allItems.map((i) => i.id)));
-      const restApps = results.filter(
-        (r) => !shownIds.has(r.id) && (r.kind === "app" || r.kind === "uwpApp"),
-      );
-      const restPlugins = results.filter(
-        (r) => !shownIds.has(r.id) && r.kind === "plugin",
-      );
-      const restCommands = results.filter(
-        (r) => !shownIds.has(r.id) && r.kind === "systemCmd",
-      );
-
-      if (restApps.length > 0) {
-        groups.push(buildSection("apps", "应用程序", restApps));
-      }
-      if (restPlugins.length > 0) {
-        groups.push(buildSection("plugins", "插件工具", restPlugins));
-      }
-      if (restCommands.length > 0) {
-        groups.push(buildSection("commands", "系统指令", restCommands));
-      }
-    }
-
-    return groups;
-  }, [hasQuery, results, pinnedItems, showDashboard, buildSection]);
+  const sections = useMemo<GridSection[]>(
+    () =>
+      groupLauncherSections(results, resultQuery, pinnedItems, showDashboard).map(
+        (group) => buildSection(group.key, group.heading, group.items),
+      ),
+    [results, resultQuery, pinnedItems, showDashboard, buildSection],
+  );
 
   const { flatCoords, rows } = useMemo(() => {
     const coords: GridCoord[] = [];

@@ -99,7 +99,7 @@
   }
 
   /* Use overflow: clip on the launcher root so programmatic scrollIntoView calls
-     (e.g. inside cmdk) can NEVER scroll or drift the outer viewport during window resizes. */
+     can NEVER scroll or drift the outer viewport during window resizes. */
   html:has(body.launcher-body),
   body.launcher-body,
   body.launcher-body #root {

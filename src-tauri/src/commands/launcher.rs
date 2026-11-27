@@ -3,7 +3,8 @@ use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Webview};
 
 use crate::commands::menu::{popup_brand_context_menu, popup_item_context_menu};
-use crate::commands::settings::{open_settings_window, toggle_pin};
+use crate::commands::settings::toggle_pin;
+use crate::config::{HEADER_LOGICAL_HEIGHT, LAUNCHER_LOGICAL_WIDTH};
 use crate::error::{AppError, AppResult};
 use crate::platform::launch::{launch_search_item, reveal_in_explorer};
 use crate::platform::window::{
@@ -17,9 +18,6 @@ use crate::plugins::{
 use crate::search::index::ItemKind;
 use crate::state::AppState;
 
-pub const LAUNCHER_LOGICAL_WIDTH: f64 = 800.0;
-pub const HEADER_LOGICAL_HEIGHT: f64 = 64.0;
-
 pub fn launch_item_by_id(app: &AppHandle, item_id: &str, as_admin: bool) -> AppResult<()> {
     let state = app.state::<AppState>();
     let raw_item = {
@@ -32,11 +30,6 @@ pub fn launch_item_by_id(app: &AppHandle, item_id: &str, as_admin: bool) -> AppR
             .cloned()
             .ok_or_else(|| AppError::NotFound(format!("Item '{item_id}' not found")))?
     };
-
-    if raw_item.exec_path == "triex:settings" {
-        open_settings_window(app)?;
-        return Ok(());
-    }
 
     if raw_item.kind == ItemKind::Plugin {
         let mut parts = raw_item.exec_path.splitn(2, ':');

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::{AppHandle, Emitter, Manager};
@@ -22,10 +21,8 @@ fn popup_on_main_window(
     }
 
     if let Some(main_win) = app.get_window("main") {
-        state.context_menu_open.store(true, Ordering::SeqCst);
-        let popup_res = main_win.popup_menu(menu);
-        state.context_menu_open.store(false, Ordering::SeqCst);
-        popup_res?;
+        let _blur_guard = state.suppress_blur_guard();
+        main_win.popup_menu(menu)?;
     }
 
     Ok(())

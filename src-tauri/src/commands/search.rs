@@ -82,7 +82,7 @@ pub async fn trigger_rebuild_index(app: &AppHandle) -> AppResult<IndexStatus> {
             tokio::task::spawn_blocking(move || -> AppResult<_> {
                 let state = handle.state::<AppState>();
                 sync_installed_plugins(&paths, &state.db)?;
-                let plugins = state.db.list_plugins()?;
+                let plugins = state.refresh_plugins_cache()?;
                 let scanned = scan_all_items(&settings.custom_scan_dirs, &plugins);
                 let usage = state.db.load_all_usage()?;
                 let mut engine = crate::search::SearchEngine::new();
@@ -139,7 +139,10 @@ pub async fn trigger_rebuild_index(app: &AppHandle) -> AppResult<IndexStatus> {
 
 pub fn refresh_directory_watcher(app: &AppHandle) -> AppResult<()> {
     let state = app.state::<AppState>();
-    let dirs = start_menu_directories(&state.current_settings().custom_scan_dirs);
+    let mut dirs = start_menu_directories(&state.current_settings().custom_scan_dirs);
+    if state.paths.plugins_dir.is_dir() && !dirs.contains(&state.paths.plugins_dir) {
+        dirs.push(state.paths.plugins_dir.clone());
+    }
     let handle = app.clone();
     let watcher = spawn_directory_watcher(dirs, move || {
         let handle = handle.clone();

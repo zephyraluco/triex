@@ -1,8 +1,10 @@
-import type {
-  ClipboardEvent,
-  KeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  RefObject,
+import {
+  useEffect,
+  useState,
+  type ClipboardEvent,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -18,6 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ipc } from "@/lib/ipc";
+import { getPluginAssetUrl } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 import { useLauncherStore } from "@/stores/useLauncherStore";
 
@@ -87,6 +90,16 @@ function TriexBrandBadge() {
   const toggleSettings = useLauncherStore((s) => s.toggleSettings);
 
   const isPluginView = !settingsOpen && Boolean(activePlugin);
+  const pluginLogoUrl =
+    isPluginView && activePlugin
+      ? getPluginAssetUrl(activePlugin.pluginId, activePlugin.logo)
+      : null;
+  const [logoFailed, setLogoFailed] = useState(false);
+
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [pluginLogoUrl]);
+
   const ringColor = isPluginView ? "text-violet-500" : "text-primary";
 
   return (
@@ -126,12 +139,27 @@ function TriexBrandBadge() {
         }}
         aria-label={settingsOpen ? "返回搜索" : "打开设置"}
         className={cn(
-          "size-9 shrink-0 rounded-full shadow-xs",
-          isPluginView && "bg-violet-600 text-white hover:bg-violet-600/90",
+          "size-9 shrink-0 overflow-hidden rounded-full shadow-xs",
+          isPluginView &&
+            (!pluginLogoUrl || logoFailed) &&
+            "bg-violet-600 text-white hover:bg-violet-600/90",
+          isPluginView &&
+            pluginLogoUrl &&
+            !logoFailed &&
+            "bg-surface hover:bg-surface-hover",
         )}
       >
         {isPluginView ? (
-          <Blocks className="size-[18px]" />
+          pluginLogoUrl && !logoFailed ? (
+            <img
+              src={pluginLogoUrl}
+              alt=""
+              onError={() => setLogoFailed(true)}
+              className="size-full object-cover"
+            />
+          ) : (
+            <Blocks className="size-[18px]" />
+          )
         ) : (
           <TriexLogoGlyph className="size-5" />
         )}
@@ -166,6 +194,14 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
   const handleSubInputChange = (value: string) => {
     setSubInput(value);
     void ipc.forwardSubInputValue(value);
+  };
+
+  const handleSubInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Enter" || event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      void ipc.forwardSubInputKeydown(event.key, event.shiftKey);
+    }
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLInputElement>) => {
@@ -298,6 +334,7 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             ref={inputRef}
             value={subInput}
             onChange={(e) => handleSubInputChange(e.target.value)}
+            onKeyDown={handleSubInputKeyDown}
             onMouseDown={(e) => handleInputMouseDown(e, subInput)}
             placeholder={activePlugin.subInputPlaceholder || "输入插件指令..."}
             autoFocus
@@ -379,22 +416,6 @@ export function SearchHeader({ inputRef }: SearchHeaderProps) {
             >
               {statusMessage}
             </Badge>
-          )}
-
-          {query.length > 0 && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => {
-                setQuery("");
-                inputRef.current?.focus();
-              }}
-              className="size-7 shrink-0 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground"
-              aria-label="清空输入"
-            >
-              <X className="size-4" />
-            </Button>
           )}
 
           <Button

@@ -90,7 +90,7 @@ impl IndexedItem {
     }
 }
 
-/// Search hit serialized across IPC to the React + cmdk frontend.
+/// Search hit serialized across IPC to the React frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResultItem {
